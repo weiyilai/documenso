@@ -4,6 +4,8 @@ import { useState } from 'react';
 
 import Link from 'next/link';
 
+import { Trans, msg } from '@lingui/macro';
+import { useLingui } from '@lingui/react';
 import {
   CheckCircle,
   Copy,
@@ -12,10 +14,10 @@ import {
   EyeIcon,
   Loader,
   MoreHorizontal,
+  MoveRight,
   Pencil,
   Share,
   Trash2,
-  XCircle,
 } from 'lucide-react';
 import { useSession } from 'next-auth/react';
 
@@ -35,40 +37,45 @@ import {
 } from '@documenso/ui/primitives/dropdown-menu';
 import { useToast } from '@documenso/ui/primitives/use-toast';
 
+import { DocumentRecipientLinkCopyDialog } from '~/components/document/document-recipient-link-copy-dialog';
+
 import { ResendDocumentActionItem } from './_action-items/resend-document';
 import { DeleteDocumentDialog } from './delete-document-dialog';
 import { DuplicateDocumentDialog } from './duplicate-document-dialog';
+import { MoveDocumentDialog } from './move-document-dialog';
 
 export type DataTableActionDropdownProps = {
   row: Document & {
-    User: Pick<User, 'id' | 'name' | 'email'>;
-    Recipient: Recipient[];
+    user: Pick<User, 'id' | 'name' | 'email'>;
+    recipients: Recipient[];
     team: Pick<Team, 'id' | 'url'> | null;
   };
-  team?: Pick<Team, 'id' | 'url'>;
+  team?: Pick<Team, 'id' | 'url'> & { teamEmail?: string };
 };
 
 export const DataTableActionDropdown = ({ row, team }: DataTableActionDropdownProps) => {
   const { data: session } = useSession();
   const { toast } = useToast();
+  const { _ } = useLingui();
 
   const [isDeleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [isDuplicateDialogOpen, setDuplicateDialogOpen] = useState(false);
+  const [isMoveDialogOpen, setMoveDialogOpen] = useState(false);
 
   if (!session) {
     return null;
   }
 
-  const recipient = row.Recipient.find((recipient) => recipient.email === session.user.email);
+  const recipient = row.recipients.find((recipient) => recipient.email === session.user.email);
 
-  const isOwner = row.User.id === session.user.id;
+  const isOwner = row.user.id === session.user.id;
   // const isRecipient = !!recipient;
   const isDraft = row.status === DocumentStatus.DRAFT;
-  // const isPending = row.status === DocumentStatus.PENDING;
+  const isPending = row.status === DocumentStatus.PENDING;
   const isComplete = row.status === DocumentStatus.COMPLETED;
   // const isSigned = recipient?.signingStatus === SigningStatus.SIGNED;
-  const isDocumentDeletable = isOwner;
   const isCurrentTeamDocument = team && row.team?.url === team.url;
+  const canManageDocument = Boolean(isOwner || isCurrentTeamDocument);
 
   const documentsPath = formatDocumentsPath(team?.url);
 
@@ -78,8 +85,7 @@ export const DataTableActionDropdown = ({ row, team }: DataTableActionDropdownPr
 
       if (!recipient) {
         document = await trpcClient.document.getDocumentById.query({
-          id: row.id,
-          teamId: team?.id,
+          documentId: row.id,
         });
       } else {
         document = await trpcClient.document.getDocumentByToken.query({
@@ -96,79 +102,109 @@ export const DataTableActionDropdown = ({ row, team }: DataTableActionDropdownPr
       await downloadPDF({ documentData, fileName: row.title });
     } catch (err) {
       toast({
-        title: 'Something went wrong',
-        description: 'An error occurred while downloading your document.',
+        title: _(msg`Something went wrong`),
+        description: _(msg`An error occurred while downloading your document.`),
         variant: 'destructive',
       });
     }
   };
 
-  const nonSignedRecipients = row.Recipient.filter((item) => item.signingStatus !== 'SIGNED');
+  const nonSignedRecipients = row.recipients.filter((item) => item.signingStatus !== 'SIGNED');
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger>
+      <DropdownMenuTrigger data-testid="document-table-action-btn">
         <MoreHorizontal className="text-muted-foreground h-5 w-5" />
       </DropdownMenuTrigger>
 
       <DropdownMenuContent className="w-52" align="start" forceMount>
-        <DropdownMenuLabel>Action</DropdownMenuLabel>
+        <DropdownMenuLabel>
+          <Trans>Action</Trans>
+        </DropdownMenuLabel>
 
-        {recipient && recipient?.role !== RecipientRole.CC && (
+        {!isDraft && recipient && recipient?.role !== RecipientRole.CC && (
           <DropdownMenuItem disabled={!recipient || isComplete} asChild>
             <Link href={`/sign/${recipient?.token}`}>
               {recipient?.role === RecipientRole.VIEWER && (
                 <>
                   <EyeIcon className="mr-2 h-4 w-4" />
-                  View
+                  <Trans>View</Trans>
                 </>
               )}
 
               {recipient?.role === RecipientRole.SIGNER && (
                 <>
                   <Pencil className="mr-2 h-4 w-4" />
-                  Sign
+                  <Trans>Sign</Trans>
                 </>
               )}
 
               {recipient?.role === RecipientRole.APPROVER && (
                 <>
                   <CheckCircle className="mr-2 h-4 w-4" />
-                  Approve
+                  <Trans>Approve</Trans>
                 </>
               )}
             </Link>
           </DropdownMenuItem>
         )}
 
-        <DropdownMenuItem disabled={(!isOwner && !isCurrentTeamDocument) || isComplete} asChild>
+        <DropdownMenuItem disabled={!canManageDocument || isComplete} asChild>
           <Link href={`${documentsPath}/${row.id}/edit`}>
             <Edit className="mr-2 h-4 w-4" />
-            Edit
+            <Trans>Edit</Trans>
           </Link>
         </DropdownMenuItem>
 
         <DropdownMenuItem disabled={!isComplete} onClick={onDownloadClick}>
           <Download className="mr-2 h-4 w-4" />
-          Download
+          <Trans>Download</Trans>
         </DropdownMenuItem>
 
         <DropdownMenuItem onClick={() => setDuplicateDialogOpen(true)}>
           <Copy className="mr-2 h-4 w-4" />
-          Duplicate
+          <Trans>Duplicate</Trans>
         </DropdownMenuItem>
 
-        <DropdownMenuItem disabled>
+        {/* We don't want to allow teams moving documents across at the moment. */}
+        {!team && (
+          <DropdownMenuItem onClick={() => setMoveDialogOpen(true)}>
+            <MoveRight className="mr-2 h-4 w-4" />
+            <Trans>Move to Team</Trans>
+          </DropdownMenuItem>
+        )}
+
+        {/* No point displaying this if there's no functionality. */}
+        {/* <DropdownMenuItem disabled>
           <XCircle className="mr-2 h-4 w-4" />
           Void
-        </DropdownMenuItem>
+        </DropdownMenuItem> */}
 
-        <DropdownMenuItem onClick={() => setDeleteDialogOpen(true)} disabled={!isDocumentDeletable}>
+        <DropdownMenuItem
+          onClick={() => setDeleteDialogOpen(true)}
+          disabled={Boolean(!canManageDocument && team?.teamEmail)}
+        >
           <Trash2 className="mr-2 h-4 w-4" />
-          Delete
+          {canManageDocument ? _(msg`Delete`) : _(msg`Hide`)}
         </DropdownMenuItem>
 
-        <DropdownMenuLabel>Share</DropdownMenuLabel>
+        <DropdownMenuLabel>
+          <Trans>Share</Trans>
+        </DropdownMenuLabel>
+
+        {canManageDocument && (
+          <DocumentRecipientLinkCopyDialog
+            recipients={row.recipients}
+            trigger={
+              <DropdownMenuItem disabled={!isPending} asChild onSelect={(e) => e.preventDefault()}>
+                <div>
+                  <Copy className="mr-2 h-4 w-4" />
+                  <Trans>Signing Links</Trans>
+                </div>
+              </DropdownMenuItem>
+            }
+          />
+        )}
 
         <ResendDocumentActionItem document={row} recipients={nonSignedRecipients} team={team} />
 
@@ -179,23 +215,29 @@ export const DataTableActionDropdown = ({ row, team }: DataTableActionDropdownPr
             <DropdownMenuItem disabled={disabled || isDraft} onSelect={(e) => e.preventDefault()}>
               <div className="flex items-center">
                 {loading ? <Loader className="mr-2 h-4 w-4" /> : <Share className="mr-2 h-4 w-4" />}
-                Share Signing Card
+                <Trans>Share Signing Card</Trans>
               </div>
             </DropdownMenuItem>
           )}
         />
       </DropdownMenuContent>
 
-      {isDocumentDeletable && (
-        <DeleteDocumentDialog
-          id={row.id}
-          status={row.status}
-          documentTitle={row.title}
-          open={isDeleteDialogOpen}
-          onOpenChange={setDeleteDialogOpen}
-          teamId={team?.id}
-        />
-      )}
+      <DeleteDocumentDialog
+        id={row.id}
+        status={row.status}
+        documentTitle={row.title}
+        open={isDeleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        teamId={team?.id}
+        canManageDocument={canManageDocument}
+      />
+
+      <MoveDocumentDialog
+        documentId={row.id}
+        open={isMoveDialogOpen}
+        onOpenChange={setMoveDialogOpen}
+      />
+
       {isDuplicateDialogOpen && (
         <DuplicateDocumentDialog
           id={row.id}

@@ -4,10 +4,11 @@ import { useState } from 'react';
 
 import Link from 'next/link';
 
-import { Copy, Edit, MoreHorizontal, Trash2 } from 'lucide-react';
+import { Trans } from '@lingui/macro';
+import { Copy, Edit, MoreHorizontal, MoveRight, Share2Icon, Trash2 } from 'lucide-react';
 import { useSession } from 'next-auth/react';
 
-import type { Template } from '@documenso/prisma/client';
+import type { Recipient, Template, TemplateDirectLink } from '@documenso/prisma/client';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,9 +19,14 @@ import {
 
 import { DeleteTemplateDialog } from './delete-template-dialog';
 import { DuplicateTemplateDialog } from './duplicate-template-dialog';
+import { MoveTemplateDialog } from './move-template-dialog';
+import { TemplateDirectLinkDialog } from './template-direct-link-dialog';
 
 export type DataTableActionDropdownProps = {
-  row: Template;
+  row: Template & {
+    directLink?: Pick<TemplateDirectLink, 'token' | 'enabled'> | null;
+    recipients: Recipient[];
+  };
   templateRootPath: string;
   teamId?: number;
 };
@@ -33,7 +39,9 @@ export const DataTableActionDropdown = ({
   const { data: session } = useSession();
 
   const [isDeleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [isTemplateDirectLinkDialogOpen, setTemplateDirectLinkDialogOpen] = useState(false);
   const [isDuplicateDialogOpen, setDuplicateDialogOpen] = useState(false);
+  const [isMoveDialogOpen, setMoveDialogOpen] = useState(false);
 
   if (!session) {
     return null;
@@ -52,9 +60,9 @@ export const DataTableActionDropdown = ({
         <DropdownMenuLabel>Action</DropdownMenuLabel>
 
         <DropdownMenuItem disabled={!isOwner && !isTeamTemplate} asChild>
-          <Link href={`${templateRootPath}/${row.id}`}>
+          <Link href={`${templateRootPath}/${row.id}/edit`}>
             <Edit className="mr-2 h-4 w-4" />
-            Edit
+            <Trans>Edit</Trans>
           </Link>
         </DropdownMenuItem>
 
@@ -63,15 +71,27 @@ export const DataTableActionDropdown = ({
           onClick={() => setDuplicateDialogOpen(true)}
         >
           <Copy className="mr-2 h-4 w-4" />
-          Duplicate
+          <Trans>Duplicate</Trans>
         </DropdownMenuItem>
+
+        <DropdownMenuItem onClick={() => setTemplateDirectLinkDialogOpen(true)}>
+          <Share2Icon className="mr-2 h-4 w-4" />
+          <Trans>Direct link</Trans>
+        </DropdownMenuItem>
+
+        {!teamId && (
+          <DropdownMenuItem onClick={() => setMoveDialogOpen(true)}>
+            <MoveRight className="mr-2 h-4 w-4" />
+            <Trans>Move to Team</Trans>
+          </DropdownMenuItem>
+        )}
 
         <DropdownMenuItem
           disabled={!isOwner && !isTeamTemplate}
           onClick={() => setDeleteDialogOpen(true)}
         >
           <Trash2 className="mr-2 h-4 w-4" />
-          Delete
+          <Trans>Delete</Trans>
         </DropdownMenuItem>
       </DropdownMenuContent>
 
@@ -82,8 +102,21 @@ export const DataTableActionDropdown = ({
         onOpenChange={setDuplicateDialogOpen}
       />
 
+      <TemplateDirectLinkDialog
+        template={row}
+        open={isTemplateDirectLinkDialogOpen}
+        onOpenChange={setTemplateDirectLinkDialogOpen}
+      />
+
+      <MoveTemplateDialog
+        templateId={row.id}
+        open={isMoveDialogOpen}
+        onOpenChange={setMoveDialogOpen}
+      />
+
       <DeleteTemplateDialog
         id={row.id}
+        teamId={row.teamId || undefined}
         open={isDeleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
       />

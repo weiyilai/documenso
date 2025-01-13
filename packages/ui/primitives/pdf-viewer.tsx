@@ -2,6 +2,8 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
+import { Trans, msg } from '@lingui/macro';
+import { useLingui } from '@lingui/react';
 import { Loader } from 'lucide-react';
 import { type PDFDocumentProxy, PasswordResponses } from 'pdfjs-dist';
 import { Document as PDFDocument, Page as PDFPage, pdfjs } from 'react-pdf';
@@ -12,7 +14,6 @@ import { match } from 'ts-pattern';
 import { PDF_VIEWER_PAGE_SELECTOR } from '@documenso/lib/constants/pdf-viewer';
 import { getFile } from '@documenso/lib/universal/upload/get-file';
 import type { DocumentData } from '@documenso/prisma/client';
-import type { DocumentWithData } from '@documenso/prisma/types/document-with-data';
 
 import { cn } from '../lib/utils';
 import { PasswordDialog } from './document-password-dialog';
@@ -39,14 +40,15 @@ const PDFLoader = () => (
   <>
     <Loader className="text-documenso h-12 w-12 animate-spin" />
 
-    <p className="text-muted-foreground mt-4">Loading document...</p>
+    <p className="text-muted-foreground mt-4">
+      <Trans>Loading document...</Trans>
+    </p>
   </>
 );
 
 export type PDFViewerProps = {
   className?: string;
   documentData: DocumentData;
-  document?: DocumentWithData;
   password?: string | null;
   onPasswordSubmit?: (password: string) => void | Promise<void>;
   onDocumentLoad?: (_doc: LoadedPDFDocument) => void;
@@ -63,6 +65,7 @@ export const PDFViewer = ({
   onPageClick,
   ...props
 }: PDFViewerProps) => {
+  const { _ } = useLingui();
   const { toast } = useToast();
 
   const $el = useRef<HTMLDivElement>(null);
@@ -160,8 +163,8 @@ export const PDFViewer = ({
         console.error(err);
 
         toast({
-          title: 'Error',
-          description: 'An error occurred while loading the document.',
+          title: _(msg`Error`),
+          description: _(msg`An error occurred while loading the document.`),
           variant: 'destructive',
         });
       }
@@ -213,8 +216,12 @@ export const PDFViewer = ({
               <div className="dark:bg-background flex h-[80vh] max-h-[60rem] flex-col items-center justify-center bg-white/50">
                 {pdfError ? (
                   <div className="text-muted-foreground text-center">
-                    <p>Something went wrong while loading the document.</p>
-                    <p className="mt-1 text-sm">Please try again or contact our support.</p>
+                    <p>
+                      <Trans>Something went wrong while loading the document.</Trans>
+                    </p>
+                    <p className="mt-1 text-sm">
+                      <Trans>Please try again or contact our support.</Trans>
+                    </p>
                   </div>
                 ) : (
                   <PDFLoader />
@@ -224,8 +231,12 @@ export const PDFViewer = ({
             error={
               <div className="dark:bg-background flex h-[80vh] max-h-[60rem] flex-col items-center justify-center bg-white/50">
                 <div className="text-muted-foreground text-center">
-                  <p>Something went wrong while loading the document.</p>
-                  <p className="mt-1 text-sm">Please try again or contact our support.</p>
+                  <p>
+                    <Trans>Something went wrong while loading the document.</Trans>
+                  </p>
+                  <p className="mt-1 text-sm">
+                    <Trans>Please try again or contact our support.</Trans>
+                  </p>
                 </div>
               </div>
             }
@@ -245,7 +256,9 @@ export const PDFViewer = ({
                     />
                   </div>
                   <p className="text-muted-foreground/80 my-2 text-center text-[11px]">
-                    Page {i + 1} of {numPages}
+                    <Trans>
+                      Page {i + 1} of {numPages}
+                    </Trans>
                   </p>
                 </div>
               ))}

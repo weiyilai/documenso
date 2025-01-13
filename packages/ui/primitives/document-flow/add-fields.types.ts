@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { ZFieldMetaSchema } from '@documenso/lib/types/field-meta';
 import { FieldType } from '@documenso/prisma/client';
 
 export const ZAddFieldsFormSchema = z.object({
@@ -14,8 +15,10 @@ export const ZAddFieldsFormSchema = z.object({
       pageY: z.number().min(0),
       pageWidth: z.number().min(0),
       pageHeight: z.number().min(0),
+      fieldMeta: ZFieldMetaSchema,
     }),
   ),
+  typedSignatureEnabled: z.boolean(),
 });
 
 export type TAddFieldsFormSchema = z.infer<typeof ZAddFieldsFormSchema>;

@@ -3,6 +3,8 @@
 import { useRouter } from 'next/navigation';
 
 import { zodResolver } from '@hookform/resolvers/zod';
+import { Trans, msg } from '@lingui/macro';
+import { useLingui } from '@lingui/react';
 import { useForm } from 'react-hook-form';
 import type { z } from 'zod';
 
@@ -21,6 +23,8 @@ import { Input } from '@documenso/ui/primitives/input';
 import { useToast } from '@documenso/ui/primitives/use-toast';
 
 import { DeleteUserDialog } from './delete-user-dialog';
+import { DisableUserDialog } from './disable-user-dialog';
+import { EnableUserDialog } from './enable-user-dialog';
 import { MultiSelectRoleCombobox } from './multiselect-role-combobox';
 
 const ZUserFormSchema = ZAdminUpdateProfileMutationSchema.omit({ id: true });
@@ -28,7 +32,9 @@ const ZUserFormSchema = ZAdminUpdateProfileMutationSchema.omit({ id: true });
 type TUserFormSchema = z.infer<typeof ZUserFormSchema>;
 
 export default function UserPage({ params }: { params: { id: number } }) {
+  const { _ } = useLingui();
   const { toast } = useToast();
+
   const router = useRouter();
 
   const { data: user } = trpc.profile.getUser.useQuery(
@@ -65,14 +71,14 @@ export default function UserPage({ params }: { params: { id: number } }) {
       router.refresh();
 
       toast({
-        title: 'Profile updated',
-        description: 'Your profile has been updated.',
+        title: _(msg`Profile updated`),
+        description: _(msg`Your profile has been updated.`),
         duration: 5000,
       });
     } catch (e) {
       toast({
-        title: 'Error',
-        description: 'An error occurred while updating your profile.',
+        title: _(msg`Error`),
+        description: _(msg`An error occurred while updating your profile.`),
         variant: 'destructive',
       });
     }
@@ -80,7 +86,9 @@ export default function UserPage({ params }: { params: { id: number } }) {
 
   return (
     <div>
-      <h2 className="text-4xl font-semibold">Manage {user?.name}'s profile</h2>
+      <h2 className="text-4xl font-semibold">
+        <Trans>Manage {user?.name}'s profile</Trans>
+      </h2>
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)}>
           <fieldset className="mt-6 flex w-full flex-col gap-y-4">
@@ -89,7 +97,9 @@ export default function UserPage({ params }: { params: { id: number } }) {
               name="name"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-muted-foreground">Name</FormLabel>
+                  <FormLabel className="text-muted-foreground">
+                    <Trans>Name</Trans>
+                  </FormLabel>
                   <FormControl>
                     <Input type="text" {...field} value={field.value ?? ''} />
                   </FormControl>
@@ -102,7 +112,9 @@ export default function UserPage({ params }: { params: { id: number } }) {
               name="email"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-muted-foreground">Email</FormLabel>
+                  <FormLabel className="text-muted-foreground">
+                    <Trans>Email</Trans>
+                  </FormLabel>
                   <FormControl>
                     <Input type="text" {...field} />
                   </FormControl>
@@ -117,7 +129,9 @@ export default function UserPage({ params }: { params: { id: number } }) {
               render={({ field: { onChange } }) => (
                 <FormItem>
                   <fieldset className="flex flex-col gap-2">
-                    <FormLabel className="text-muted-foreground">Roles</FormLabel>
+                    <FormLabel className="text-muted-foreground">
+                      <Trans>Roles</Trans>
+                    </FormLabel>
                     <FormControl>
                       <MultiSelectRoleCombobox
                         listValues={roles}
@@ -132,7 +146,7 @@ export default function UserPage({ params }: { params: { id: number } }) {
 
             <div className="mt-4">
               <Button type="submit" loading={form.formState.isSubmitting}>
-                Update user
+                <Trans>Update user</Trans>
               </Button>
             </div>
           </fieldset>
@@ -141,7 +155,11 @@ export default function UserPage({ params }: { params: { id: number } }) {
 
       <hr className="my-4" />
 
-      {user && <DeleteUserDialog user={user} />}
+      <div className="flex flex-col items-center gap-4">
+        {user && <DeleteUserDialog user={user} />}
+        {user && user.disabled && <EnableUserDialog userToEnable={user} />}
+        {user && !user.disabled && <DisableUserDialog userToDisable={user} />}
+      </div>
     </div>
   );
 }

@@ -1,40 +1,54 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
-import type { Document, Field } from '@documenso/prisma/client';
+import { Trans } from '@lingui/macro';
+
+import { fieldsContainUnsignedRequiredField } from '@documenso/lib/utils/advanced-fields-helpers';
+import type { Field } from '@documenso/prisma/client';
 import { RecipientRole } from '@documenso/prisma/client';
 import { Button } from '@documenso/ui/primitives/button';
 import {
   Dialog,
   DialogContent,
   DialogFooter,
+  DialogTitle,
   DialogTrigger,
 } from '@documenso/ui/primitives/dialog';
 
-import { truncateTitle } from '~/helpers/truncate-title';
+import { SigningDisclosure } from '~/components/general/signing-disclosure';
 
 export type SignDialogProps = {
   isSubmitting: boolean;
-  document: Document;
+  documentTitle: string;
   fields: Field[];
   fieldsValidated: () => void | Promise<void>;
   onSignatureComplete: () => void | Promise<void>;
   role: RecipientRole;
+  disabled?: boolean;
 };
 
 export const SignDialog = ({
   isSubmitting,
-  document,
+  documentTitle,
   fields,
   fieldsValidated,
   onSignatureComplete,
   role,
+  disabled = false,
 }: SignDialogProps) => {
   const [showDialog, setShowDialog] = useState(false);
-  const truncatedTitle = truncateTitle(document.title);
-  const isComplete = fields.every((field) => field.inserted);
+
+  const isComplete = useMemo(() => !fieldsContainUnsignedRequiredField(fields), [fields]);
+
+  const handleOpenChange = (open: boolean) => {
+    if (isSubmitting || !isComplete) {
+      return;
+    }
+
+    setShowDialog(open);
+  };
 
   return (
-    <Dialog open={showDialog && isComplete} onOpenChange={setShowDialog}>
+    <Dialog open={showDialog} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <Button
           className="w-full"
@@ -42,38 +56,79 @@ export const SignDialog = ({
           size="lg"
           onClick={fieldsValidated}
           loading={isSubmitting}
+          disabled={disabled}
         >
-          {isComplete ? 'Complete' : 'Next field'}
+          {isComplete ? <Trans>Complete</Trans> : <Trans>Next field</Trans>}
         </Button>
       </DialogTrigger>
+
       <DialogContent>
-        <div className="text-center">
+        <DialogTitle>
           <div className="text-foreground text-xl font-semibold">
-            {role === RecipientRole.VIEWER && 'Mark Document as Viewed'}
-            {role === RecipientRole.SIGNER && 'Sign Document'}
-            {role === RecipientRole.APPROVER && 'Approve Document'}
+            {role === RecipientRole.VIEWER && <Trans>Complete Viewing</Trans>}
+            {role === RecipientRole.SIGNER && <Trans>Complete Signing</Trans>}
+            {role === RecipientRole.APPROVER && <Trans>Complete Approval</Trans>}
           </div>
-          <div className="text-muted-foreground mx-auto w-4/5 py-2 text-center">
-            {role === RecipientRole.VIEWER &&
-              `You are about to finish viewing "${truncatedTitle}". Are you sure?`}
-            {role === RecipientRole.SIGNER &&
-              `You are about to finish signing "${truncatedTitle}". Are you sure?`}
-            {role === RecipientRole.APPROVER &&
-              `You are about to finish approving "${truncatedTitle}". Are you sure?`}
-          </div>
+        </DialogTitle>
+
+        <div className="text-muted-foreground max-w-[50ch]">
+          {role === RecipientRole.VIEWER && (
+            <span>
+              <Trans>
+                <span className="inline-flex flex-wrap">
+                  You are about to complete viewing "
+                  <span className="inline-block max-w-[11rem] truncate align-baseline">
+                    {documentTitle}
+                  </span>
+                  ".
+                </span>
+                <br /> Are you sure?
+              </Trans>
+            </span>
+          )}
+          {role === RecipientRole.SIGNER && (
+            <span>
+              <Trans>
+                <span className="inline-flex flex-wrap">
+                  You are about to complete signing "
+                  <span className="inline-block max-w-[11rem] truncate align-baseline">
+                    {documentTitle}
+                  </span>
+                  ".
+                </span>
+                <br /> Are you sure?
+              </Trans>
+            </span>
+          )}
+          {role === RecipientRole.APPROVER && (
+            <span>
+              <Trans>
+                <span className="inline-flex flex-wrap">
+                  You are about to complete approving{' '}
+                  <span className="inline-block max-w-[11rem] truncate align-baseline">
+                    "{documentTitle}"
+                  </span>
+                  .
+                </span>
+                <br /> Are you sure?
+              </Trans>
+            </span>
+          )}
         </div>
+
+        <SigningDisclosure className="mt-4" />
 
         <DialogFooter>
           <div className="flex w-full flex-1 flex-nowrap gap-4">
             <Button
               type="button"
-              className="dark:bg-muted dark:hover:bg-muted/80 flex-1  bg-black/5 hover:bg-black/10"
+              className="dark:bg-muted dark:hover:bg-muted/80 flex-1 bg-black/5 hover:bg-black/10"
               variant="secondary"
               onClick={() => {
                 setShowDialog(false);
               }}
             >
-              Cancel
+              <Trans>Cancel</Trans>
             </Button>
 
             <Button
@@ -83,9 +138,9 @@ export const SignDialog = ({
               loading={isSubmitting}
               onClick={onSignatureComplete}
             >
-              {role === RecipientRole.VIEWER && 'Mark as Viewed'}
-              {role === RecipientRole.SIGNER && 'Sign'}
-              {role === RecipientRole.APPROVER && 'Approve'}
+              {role === RecipientRole.VIEWER && <Trans>Mark as Viewed</Trans>}
+              {role === RecipientRole.SIGNER && <Trans>Sign</Trans>}
+              {role === RecipientRole.APPROVER && <Trans>Approve</Trans>}
             </Button>
           </div>
         </DialogFooter>

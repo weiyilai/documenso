@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 
+import { Trans, msg } from '@lingui/macro';
+import { useLingui } from '@lingui/react';
 import { CheckCircle, Download, EyeIcon, Pencil } from 'lucide-react';
 import { useSession } from 'next-auth/react';
 import { match } from 'ts-pattern';
@@ -16,22 +18,23 @@ import { useToast } from '@documenso/ui/primitives/use-toast';
 
 export type DocumentPageViewButtonProps = {
   document: Document & {
-    User: Pick<User, 'id' | 'name' | 'email'>;
-    Recipient: Recipient[];
+    user: Pick<User, 'id' | 'name' | 'email'>;
+    recipients: Recipient[];
     team: Pick<Team, 'id' | 'url'> | null;
   };
   team?: Pick<Team, 'id' | 'url'>;
 };
 
-export const DocumentPageViewButton = ({ document, team }: DocumentPageViewButtonProps) => {
+export const DocumentPageViewButton = ({ document }: DocumentPageViewButtonProps) => {
   const { data: session } = useSession();
   const { toast } = useToast();
+  const { _ } = useLingui();
 
   if (!session) {
     return null;
   }
 
-  const recipient = document.Recipient.find((recipient) => recipient.email === session.user.email);
+  const recipient = document.recipients.find((recipient) => recipient.email === session.user.email);
 
   const isRecipient = !!recipient;
   const isPending = document.status === DocumentStatus.PENDING;
@@ -44,8 +47,7 @@ export const DocumentPageViewButton = ({ document, team }: DocumentPageViewButto
   const onDownloadClick = async () => {
     try {
       const documentWithData = await trpcClient.document.getDocumentById.query({
-        id: document.id,
-        teamId: team?.id,
+        documentId: document.id,
       });
 
       const documentData = documentWithData?.documentData;
@@ -57,8 +59,8 @@ export const DocumentPageViewButton = ({ document, team }: DocumentPageViewButto
       await downloadPDF({ documentData, fileName: documentWithData.title });
     } catch (err) {
       toast({
-        title: 'Something went wrong',
-        description: 'An error occurred while downloading your document.',
+        title: _(msg`Something went wrong`),
+        description: _(msg`An error occurred while downloading your document.`),
         variant: 'destructive',
       });
     }
@@ -77,19 +79,19 @@ export const DocumentPageViewButton = ({ document, team }: DocumentPageViewButto
             .with(RecipientRole.SIGNER, () => (
               <>
                 <Pencil className="-ml-1 mr-2 h-4 w-4" />
-                Sign
+                <Trans>Sign</Trans>
               </>
             ))
             .with(RecipientRole.APPROVER, () => (
               <>
                 <CheckCircle className="-ml-1 mr-2 h-4 w-4" />
-                Approve
+                <Trans>Approve</Trans>
               </>
             ))
             .otherwise(() => (
               <>
                 <EyeIcon className="-ml-1 mr-2 h-4 w-4" />
-                View
+                <Trans>View</Trans>
               </>
             ))}
         </Link>
@@ -97,13 +99,15 @@ export const DocumentPageViewButton = ({ document, team }: DocumentPageViewButto
     ))
     .with({ isComplete: false }, () => (
       <Button className="w-full" asChild>
-        <Link href={`${documentsPath}/${document.id}/edit`}>Edit</Link>
+        <Link href={`${documentsPath}/${document.id}/edit`}>
+          <Trans>Edit</Trans>
+        </Link>
       </Button>
     ))
     .with({ isComplete: true }, () => (
       <Button className="w-full" onClick={onDownloadClick}>
         <Download className="-ml-1 mr-2 inline h-4 w-4" />
-        Download
+        <Trans>Download</Trans>
       </Button>
     ))
     .otherwise(() => null);

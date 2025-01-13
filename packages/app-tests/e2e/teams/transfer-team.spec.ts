@@ -1,9 +1,9 @@
 import { expect, test } from '@playwright/test';
 
 import { WEBAPP_BASE_URL } from '@documenso/lib/constants/app';
-import { seedTeam, seedTeamTransfer, unseedTeam } from '@documenso/prisma/seed/teams';
+import { seedTeam, seedTeamTransfer } from '@documenso/prisma/seed/teams';
 
-import { manualLogin } from '../fixtures/authentication';
+import { apiSignin } from '../fixtures/authentication';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -14,7 +14,7 @@ test('[TEAMS]: initiate and cancel team transfer', async ({ page }) => {
 
   const teamMember = team.members[1];
 
-  await manualLogin({
+  await apiSignin({
     page,
     email: team.owner.email,
     password: 'password',
@@ -29,7 +29,7 @@ test('[TEAMS]: initiate and cancel team transfer', async ({ page }) => {
   await page.getByLabel('Confirm by typing transfer').fill('transfer');
   await page.getByRole('button', { name: 'Transfer' }).click();
 
-  await expect(page.locator('[id="\\:r2\\:-form-item-message"]')).toContainText(
+  await expect(page.locator('[id*="form-item-message"]').first()).toContainText(
     `You must enter 'transfer ${team.name}' to proceed`,
   );
 
@@ -43,8 +43,6 @@ test('[TEAMS]: initiate and cancel team transfer', async ({ page }) => {
   await expect(page.getByRole('status').first()).toContainText(
     'The team transfer invitation has been successfully deleted.',
   );
-
-  await unseedTeam(team.url);
 });
 
 /**
@@ -64,6 +62,4 @@ test.skip('[TEAMS]: accept team transfer', async ({ page }) => {
 
   await page.goto(`${WEBAPP_BASE_URL}/team/verify/transfer/${teamTransferRequest.token}`);
   await expect(page.getByRole('heading')).toContainText('Team ownership transferred!');
-
-  await unseedTeam(team.url);
 });

@@ -1,40 +1,38 @@
-import { compare } from 'bcrypt';
-
 import { prisma } from '@documenso/prisma';
 import type { User } from '@documenso/prisma/client';
 import { UserSecurityAuditLogType } from '@documenso/prisma/client';
 
-import { ErrorCode } from '../../next-auth/error-codes';
+import { AppError, AppErrorCode } from '../../errors/app-error';
 import type { RequestMetadata } from '../../universal/extract-request-metadata';
 import { validateTwoFactorAuthentication } from './validate-2fa';
 
 type DisableTwoFactorAuthenticationOptions = {
   user: User;
-  backupCode: string;
-  password: string;
+  totpCode?: string;
+  backupCode?: string;
   requestMetadata?: RequestMetadata;
 };
 
 export const disableTwoFactorAuthentication = async ({
+  totpCode,
   backupCode,
   user,
-  password,
   requestMetadata,
 }: DisableTwoFactorAuthenticationOptions) => {
-  if (!user.password) {
-    throw new Error(ErrorCode.USER_MISSING_PASSWORD);
+  let isValid = false;
+
+  if (!totpCode && !backupCode) {
+    throw new AppError(AppErrorCode.INVALID_REQUEST);
   }
 
-  const isCorrectPassword = await compare(password, user.password);
-
-  if (!isCorrectPassword) {
-    throw new Error(ErrorCode.INCORRECT_PASSWORD);
+  if (totpCode) {
+    isValid = await validateTwoFactorAuthentication({ totpCode, user });
+  } else if (backupCode) {
+    isValid = await validateTwoFactorAuthentication({ backupCode, user });
   }
-
-  const isValid = await validateTwoFactorAuthentication({ backupCode, user });
 
   if (!isValid) {
-    throw new Error(ErrorCode.INCORRECT_TWO_FACTOR_BACKUP_CODE);
+    throw new AppError('INCORRECT_TWO_FACTOR_CODE');
   }
 
   await prisma.$transaction(async (tx) => {

@@ -1,17 +1,22 @@
 import { test } from '@playwright/test';
 
 import { WEBAPP_BASE_URL } from '@documenso/lib/constants/app';
-import { seedTeam, unseedTeam } from '@documenso/prisma/seed/teams';
+import { seedTeam } from '@documenso/prisma/seed/teams';
 import { seedUser } from '@documenso/prisma/seed/users';
 
-import { manualLogin } from '../fixtures/authentication';
+import { apiSignin } from '../fixtures/authentication';
 
 test.describe.configure({ mode: 'parallel' });
 
 test('[TEAMS]: create team', async ({ page }) => {
   const user = await seedUser();
 
-  await manualLogin({
+  test.skip(
+    process.env.NEXT_PUBLIC_FEATURE_BILLING_ENABLED === 'true',
+    'Test skipped because billing is enabled.',
+  );
+
+  await apiSignin({
     page,
     email: user.email,
     redirectPath: '/settings/teams',
@@ -26,19 +31,14 @@ test('[TEAMS]: create team', async ({ page }) => {
 
   await page.getByTestId('dialog-create-team-button').waitFor({ state: 'hidden' });
 
-  const isCheckoutRequired = page.url().includes('pending');
-  test.skip(isCheckoutRequired, 'Test skipped because billing is enabled.');
-
   // Goto new team settings page.
   await page.getByRole('row').filter({ hasText: teamId }).getByRole('link').nth(1).click();
-
-  await unseedTeam(teamId);
 });
 
 test('[TEAMS]: delete team', async ({ page }) => {
   const team = await seedTeam();
 
-  await manualLogin({
+  await apiSignin({
     page,
     email: team.owner.email,
     redirectPath: `/t/${team.url}/settings`,
@@ -56,7 +56,7 @@ test('[TEAMS]: delete team', async ({ page }) => {
 test('[TEAMS]: update team', async ({ page }) => {
   const team = await seedTeam();
 
-  await manualLogin({
+  await apiSignin({
     page,
     email: team.owner.email,
   });
@@ -82,6 +82,4 @@ test('[TEAMS]: update team', async ({ page }) => {
 
   // Check we have been redirected to the new team URL and the name is updated.
   await page.waitForURL(`${WEBAPP_BASE_URL}/t/${updatedTeamId}/settings`);
-
-  await unseedTeam(updatedTeamId);
 });

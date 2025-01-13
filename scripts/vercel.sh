@@ -6,7 +6,6 @@ set -eo pipefail
 # Get the directory of this script, regardless of where it is called from.
 SCRIPT_DIR="$(readlink -f "$(dirname "$0")")"
 
-
 function log() {
   echo "[VercelBuild]: $1"
 }
@@ -38,24 +37,6 @@ function remap_webapp_env() {
   fi
 }
 
-function build_marketing() {
-  log "Building marketing for $VERCEL_ENV"
-
-  remap_marketing_env
-  remap_database_integration
-
-  npm run prisma:generate --workspace=@documenso/prisma
-  npm run build -- --filter @documenso/marketing
-}
-
-function remap_marketing_env() {
-  if [[ "$VERCEL_ENV" != "production" ]]; then
-    log "Remapping marketing environment variables for $VERCEL_ENV"
-
-    export NEXT_PUBLIC_MARKETING_URL="https://$VERCEL_URL"
-  fi
-}
-
 function remap_database_integration() {
   log "Remapping Supabase integration for $VERCEL_ENV"
 
@@ -69,18 +50,16 @@ function remap_database_integration() {
     export NEXT_PRIVATE_DIRECT_DATABASE_URL="$DATABASE_URL"
   fi
 
+  if [[ ! -z "$DATABASE_URL_UNPOOLED" ]]; then
+    log "Remapping for Neon integration"
+
+    export NEXT_PRIVATE_DATABASE_URL="$DATABASE_URL&pgbouncer=true"
+    export NEXT_PRIVATE_DIRECT_DATABASE_URL="$DATABASE_URL_UNPOOLED"
+  fi
+
   if [[ ! -z "$POSTGRES_URL_NON_POOLING" ]]; then
     export NEXT_PRIVATE_DATABASE_URL="$POSTGRES_URL?pgbouncer=true"
     export NEXT_PRIVATE_DIRECT_DATABASE_URL="$POSTGRES_URL_NON_POOLING"
-  fi
-
-  if [[ "$NEXT_PRIVATE_DATABASE_URL" == *"neon.tech"* ]]; then
-    log "Remapping for Neon integration"
-
-    PROJECT_ID="$(echo "$PGHOST" | cut -d'.' -f1)"
-    PGBOUNCER_HOST="$(echo "$PGHOST" | sed "s/${PROJECT_ID}/${PROJECT_ID}-pooler/")"
-
-    export NEXT_PRIVATE_DATABASE_URL="postgres://${PGUSER}:${PGPASSWORD}@${PGBOUNCER_HOST}/${PGDATABASE}?pgbouncer=true"
   fi
 }
 
@@ -97,12 +76,9 @@ case "$DEPLOYMENT_TARGET" in
   "webapp")
     build_webapp
     ;;
-  "marketing")
-    build_marketing
-    ;;
   *)
     log "ERROR - Missing or invalid DEPLOYMENT_TARGET environment variable."
-    log "ERROR - DEPLOYMENT_TARGET must be either 'webapp' or 'marketing'."
+    log "ERROR - DEPLOYMENT_TARGET must be 'webapp'."
     exit 1
     ;;
 esac

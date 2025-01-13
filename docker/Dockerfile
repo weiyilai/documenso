@@ -15,8 +15,7 @@ WORKDIR /app
 
 COPY . .
 
-RUN TURBO_VERSION="$(npm list --package-lock-only --json turbo | jq -r '.dependencies.turbo.version')"
-RUN npm install -g "turbo@$TURBO_VERSION"
+RUN npm install -g "turbo@^1.9.3"
 
 # Outputs to the /out folder
 # source: https://turbo.build/repo/docs/reference/command-line-reference/prune#--docker
@@ -32,6 +31,7 @@ RUN apk add --no-cache libc6-compat
 RUN apk add --no-cache jq
 # Required for node_modules/aws-crt
 RUN apk add --no-cache make cmake g++
+
 WORKDIR /app
 
 # Disable husky from installing hooks
@@ -58,6 +58,8 @@ COPY .gitignore .gitignore
 COPY --from=builder /app/out/json/ .
 COPY --from=builder /app/out/package-lock.json ./package-lock.json
 
+COPY --from=builder /app/lingui.config.ts ./lingui.config.ts
+
 RUN npm ci
 
 # Then copy all the source code (as it changes more often)
@@ -65,8 +67,7 @@ COPY --from=builder /app/out/full/ .
 # Finally copy the turbo.json file so that we can run turbo commands
 COPY turbo.json turbo.json
 
-RUN TURBO_VERSION="$(npm list --package-lock-only --json turbo | jq -r '.dependencies.turbo.version')"
-RUN npm install -g "turbo@$TURBO_VERSION"
+RUN npm install -g "turbo@^1.9.3"
 
 RUN turbo run build --filter=@documenso/web...
 
@@ -80,6 +81,7 @@ WORKDIR /app
 # Don't run production as root
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
+
 USER nextjs
 
 COPY --from=installer /app/apps/web/next.config.js .
@@ -91,4 +93,18 @@ COPY --from=installer --chown=nextjs:nodejs /app/apps/web/.next/standalone ./
 COPY --from=installer --chown=nextjs:nodejs /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=installer --chown=nextjs:nodejs /app/apps/web/public ./apps/web/public
 
-CMD node apps/web/server.js
+# Copy the prisma binary, schema and migrations
+COPY --from=installer --chown=nextjs:nodejs /app/packages/prisma/schema.prisma ./packages/prisma/schema.prisma
+COPY --from=installer --chown=nextjs:nodejs /app/packages/prisma/migrations ./packages/prisma/migrations
+COPY --from=installer --chown=nextjs:nodejs /app/node_modules/prisma/ ./node_modules/prisma/
+COPY --from=installer --chown=nextjs:nodejs /app/node_modules/@prisma/ ./node_modules/@prisma/
+
+# Symlink the prisma binary
+RUN mkdir node_modules/.bin
+RUN ln -s /app/node_modules/prisma/build/index.js ./node_modules/.bin/prisma
+
+
+# Get the start script from docker/start.sh
+COPY --chown=nextjs:nodejs ./docker/start.sh ./start.sh
+
+CMD ["sh", "start.sh"]

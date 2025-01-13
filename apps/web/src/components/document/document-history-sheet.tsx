@@ -2,21 +2,23 @@
 
 import { useMemo, useState } from 'react';
 
+import { Trans } from '@lingui/macro';
+import { useLingui } from '@lingui/react';
 import { ArrowRightIcon, Loader } from 'lucide-react';
+import { DateTime } from 'luxon';
 import { match } from 'ts-pattern';
 import { UAParser } from 'ua-parser-js';
 
 import { DOCUMENT_AUDIT_LOG_EMAIL_FORMAT } from '@documenso/lib/constants/document-audit-logs';
+import { DOCUMENT_AUTH_TYPES } from '@documenso/lib/constants/document-auth';
 import { DOCUMENT_AUDIT_LOG_TYPE } from '@documenso/lib/types/document-audit-logs';
-import { formatDocumentAuditLogActionString } from '@documenso/lib/utils/document-audit-logs';
+import { formatDocumentAuditLogAction } from '@documenso/lib/utils/document-audit-logs';
 import { trpc } from '@documenso/trpc/react';
 import { cn } from '@documenso/ui/lib/utils';
 import { Avatar, AvatarFallback } from '@documenso/ui/primitives/avatar';
 import { Badge } from '@documenso/ui/primitives/badge';
 import { Button } from '@documenso/ui/primitives/button';
 import { Sheet, SheetContent, SheetTrigger } from '@documenso/ui/primitives/sheet';
-
-import { LocaleDate } from '~/components/formatter/locale-date';
 
 import { DocumentHistorySheetChanges } from './document-history-sheet-changes';
 
@@ -35,6 +37,8 @@ export const DocumentHistorySheet = ({
   onMenuOpenChange,
   children,
 }: DocumentHistorySheetProps) => {
+  const { _, i18n } = useLingui();
+
   const [isUserDetailsVisible, setIsUserDetailsVisible] = useState(false);
 
   const {
@@ -79,7 +83,11 @@ export const DocumentHistorySheet = ({
    * @param text The text to format
    * @returns The formatted text
    */
-  const formatGenericText = (text: string) => {
+  const formatGenericText = (text?: string | null) => {
+    if (!text) {
+      return '';
+    }
+
     return (text.charAt(0).toUpperCase() + text.slice(1).toLowerCase()).replaceAll('_', ' ');
   };
 
@@ -92,12 +100,18 @@ export const DocumentHistorySheet = ({
         className="flex w-full max-w-[500px] flex-col overflow-y-auto p-0"
       >
         <div className="text-foreground px-6 pt-6">
-          <h1 className="text-lg font-medium">Document history</h1>
+          <h1 className="text-lg font-medium">
+            <Trans>Document history</Trans>
+          </h1>
           <button
             className="text-muted-foreground text-sm"
             onClick={() => setIsUserDetailsVisible(!isUserDetailsVisible)}
           >
-            {isUserDetailsVisible ? 'Hide' : 'Show'} additional information
+            {isUserDetailsVisible ? (
+              <Trans>Hide additional information</Trans>
+            ) : (
+              <Trans>Show additional information</Trans>
+            )}
           </button>
         </div>
 
@@ -109,12 +123,14 @@ export const DocumentHistorySheet = ({
 
         {isLoadingError && (
           <div className="flex h-full flex-col items-center justify-center">
-            <p className="text-foreground/80 text-sm">Unable to load document history</p>
+            <p className="text-foreground/80 text-sm">
+              <Trans>Unable to load document history</Trans>
+            </p>
             <button
               onClick={async () => refetch()}
               className="text-foreground/70 hover:text-muted-foreground mt-2 text-sm"
             >
-              Click here to retry
+              <Trans>Click here to retry</Trans>
             </button>
           </div>
         )}
@@ -136,10 +152,12 @@ export const DocumentHistorySheet = ({
 
                   <div>
                     <p className="text-foreground text-xs font-bold">
-                      {formatDocumentAuditLogActionString(auditLog, userId)}
+                      {formatDocumentAuditLogAction(_, auditLog, userId).description}
                     </p>
                     <p className="text-foreground/50 text-xs">
-                      <LocaleDate date={auditLog.createdAt} format="d MMM, yyyy HH:MM a" />
+                      {DateTime.fromJSDate(auditLog.createdAt)
+                        .setLocale(i18n.locales?.[0] || i18n.locale)
+                        .toFormat('d MMM, yyyy HH:MM a')}
                     </p>
                   </div>
                 </div>
@@ -151,7 +169,9 @@ export const DocumentHistorySheet = ({
                     { type: DOCUMENT_AUDIT_LOG_TYPE.DOCUMENT_DELETED },
                     { type: DOCUMENT_AUDIT_LOG_TYPE.DOCUMENT_OPENED },
                     { type: DOCUMENT_AUDIT_LOG_TYPE.DOCUMENT_RECIPIENT_COMPLETED },
+                    { type: DOCUMENT_AUDIT_LOG_TYPE.DOCUMENT_RECIPIENT_REJECTED },
                     { type: DOCUMENT_AUDIT_LOG_TYPE.DOCUMENT_SENT },
+                    { type: DOCUMENT_AUDIT_LOG_TYPE.DOCUMENT_MOVED_TO_TEAM },
                     () => null,
                   )
                   .with(
@@ -219,6 +239,24 @@ export const DocumentHistorySheet = ({
                       />
                     ),
                   )
+                  .with(
+                    { type: DOCUMENT_AUDIT_LOG_TYPE.DOCUMENT_GLOBAL_AUTH_ACCESS_UPDATED },
+                    { type: DOCUMENT_AUDIT_LOG_TYPE.DOCUMENT_GLOBAL_AUTH_ACTION_UPDATED },
+                    ({ data }) => (
+                      <DocumentHistorySheetChanges
+                        values={[
+                          {
+                            key: 'Old',
+                            value: DOCUMENT_AUTH_TYPES[data.from || '']?.value || 'None',
+                          },
+                          {
+                            key: 'New',
+                            value: DOCUMENT_AUTH_TYPES[data.to || '']?.value || 'None',
+                          },
+                        ]}
+                      />
+                    ),
+                  )
                   .with({ type: DOCUMENT_AUDIT_LOG_TYPE.DOCUMENT_META_UPDATED }, ({ data }) => {
                     if (data.changes.length === 0) {
                       return null;
@@ -247,6 +285,23 @@ export const DocumentHistorySheet = ({
                       ]}
                     />
                   ))
+                  .with(
+                    { type: DOCUMENT_AUDIT_LOG_TYPE.DOCUMENT_EXTERNAL_ID_UPDATED },
+                    ({ data }) => (
+                      <DocumentHistorySheetChanges
+                        values={[
+                          {
+                            key: 'Old',
+                            value: data.from,
+                          },
+                          {
+                            key: 'New',
+                            value: data.to,
+                          },
+                        ]}
+                      />
+                    ),
+                  )
                   .with({ type: DOCUMENT_AUDIT_LOG_TYPE.DOCUMENT_FIELD_INSERTED }, ({ data }) => (
                     <DocumentHistorySheetChanges
                       values={[
@@ -281,6 +336,23 @@ export const DocumentHistorySheet = ({
                       ]}
                     />
                   ))
+                  .with(
+                    { type: DOCUMENT_AUDIT_LOG_TYPE.DOCUMENT_VISIBILITY_UPDATED },
+                    ({ data }) => (
+                      <DocumentHistorySheetChanges
+                        values={[
+                          {
+                            key: 'Old',
+                            value: data.from,
+                          },
+                          {
+                            key: 'New',
+                            value: data.to,
+                          },
+                        ]}
+                      />
+                    ),
+                  )
                   .exhaustive()}
 
                 {isUserDetailsVisible && (

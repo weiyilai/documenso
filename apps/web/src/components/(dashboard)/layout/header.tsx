@@ -4,11 +4,11 @@ import { type HTMLAttributes, useEffect, useState } from 'react';
 
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 
 import { MenuIcon, SearchIcon } from 'lucide-react';
 
-import { useFeatureFlags } from '@documenso/lib/client-only/providers/feature-flag';
-import type { GetTeamsResponse } from '@documenso/lib/server-only/team/get-teams';
+import type { TGetTeamsResponse } from '@documenso/lib/server-only/team/get-teams';
 import { getRootHref } from '@documenso/lib/utils/params';
 import type { User } from '@documenso/prisma/client';
 import { cn } from '@documenso/ui/lib/utils';
@@ -19,19 +19,14 @@ import { CommandMenu } from '../common/command-menu';
 import { DesktopNav } from './desktop-nav';
 import { MenuSwitcher } from './menu-switcher';
 import { MobileNavigation } from './mobile-navigation';
-import { ProfileDropdown } from './profile-dropdown';
 
 export type HeaderProps = HTMLAttributes<HTMLDivElement> & {
   user: User;
-  teams: GetTeamsResponse;
+  teams: TGetTeamsResponse;
 };
 
 export const Header = ({ className, user, teams, ...props }: HeaderProps) => {
   const params = useParams();
-
-  const { getFlag } = useFeatureFlags();
-
-  const isTeamsEnabled = getFlag('app_teams');
 
   const [isCommandMenuOpen, setIsCommandMenuOpen] = useState(false);
   const [isHamburgerMenuOpen, setIsHamburgerMenuOpen] = useState(false);
@@ -47,33 +42,17 @@ export const Header = ({ className, user, teams, ...props }: HeaderProps) => {
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
-  if (!isTeamsEnabled) {
-    return (
-      <header
-        className={cn(
-          'supports-backdrop-blur:bg-background/60 bg-background/95 sticky top-0 z-[60] flex h-16 w-full items-center border-b border-b-transparent backdrop-blur duration-200',
-          scrollY > 5 && 'border-b-border',
-          className,
-        )}
-        {...props}
-      >
-        <div className="mx-auto flex w-full max-w-screen-xl items-center justify-between gap-x-4 px-4 md:justify-normal md:px-8">
-          <Link
-            href="/"
-            className="focus-visible:ring-ring ring-offset-background rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
-          >
-            <Logo className="h-6 w-auto" />
-          </Link>
+  const pathname = usePathname();
 
-          <DesktopNav />
+  const isPathTeamUrl = (teamUrl: string) => {
+    if (!pathname || !pathname.startsWith(`/t/`)) {
+      return false;
+    }
 
-          <div className="flex gap-x-4 md:ml-8">
-            <ProfileDropdown user={user} />
-          </div>
-        </div>
-      </header>
-    );
-  }
+    return pathname.split('/')[2] === teamUrl;
+  };
+
+  const selectedTeam = teams?.find((team) => isPathTeamUrl(team.url));
 
   return (
     <header
@@ -92,9 +71,12 @@ export const Header = ({ className, user, teams, ...props }: HeaderProps) => {
           <Logo className="h-6 w-auto" />
         </Link>
 
-        <DesktopNav />
+        <DesktopNav setIsCommandMenuOpen={setIsCommandMenuOpen} />
 
-        <div className="flex gap-x-4 md:ml-8">
+        <div
+          className="flex gap-x-4 md:ml-8"
+          title={selectedTeam ? selectedTeam.name : (user.name ?? '')}
+        >
           <MenuSwitcher user={user} teams={teams} />
         </div>
 

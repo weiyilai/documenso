@@ -1,5 +1,6 @@
 'use client';
 
+import { Trans } from '@lingui/macro';
 import { File, User2 } from 'lucide-react';
 
 import { NEXT_PUBLIC_WEBAPP_URL } from '@documenso/lib/constants/app';
@@ -24,9 +25,8 @@ export const UserProfileSkeleton = ({ className, user, rows = 2 }: UserProfileSk
         className,
       )}
     >
-      <div className="border-border bg-background text-muted-foreground inline-flex items-center rounded-md border px-2.5 py-1.5 text-sm">
-        <span>{baseUrl.host}/u/</span>
-        <span className="inline-block max-w-[8rem] truncate lowercase">{user.url}</span>
+      <div className="border-border bg-background text-muted-foreground inline-block max-w-full truncate rounded-md border px-2.5 py-1.5 text-sm lowercase">
+        {baseUrl.host}/u/{user.url}
       </div>
 
       <div className="mt-4">
@@ -72,7 +72,7 @@ export const UserProfileSkeleton = ({ className, user, rows = 2 }: UserProfileSk
 
                 <div className="flex-shrink-0">
                   <Button type="button" size="sm" className="pointer-events-none w-32">
-                    Sign
+                    <Trans>Sign</Trans>
                   </Button>
                 </div>
               </div>

@@ -1,30 +1,40 @@
+import { match } from 'ts-pattern';
+
 import { prisma } from '@documenso/prisma';
 import type { Prisma } from '@documenso/prisma/client';
+import { TeamMemberRole } from '@documenso/prisma/client';
 
+import { AppError, AppErrorCode } from '../../errors/app-error';
+import { DocumentVisibility } from '../../types/document-visibility';
 import { getTeamById } from '../team/get-team';
 
 export type GetDocumentByIdOptions = {
-  id: number;
+  documentId: number;
   userId: number;
   teamId?: number;
 };
 
-export const getDocumentById = async ({ id, userId, teamId }: GetDocumentByIdOptions) => {
+export const getDocumentById = async ({ documentId, userId, teamId }: GetDocumentByIdOptions) => {
   const documentWhereInput = await getDocumentWhereInput({
-    documentId: id,
+    documentId,
     userId,
     teamId,
   });
 
-  return await prisma.document.findFirstOrThrow({
+  const document = await prisma.document.findFirst({
     where: documentWhereInput,
     include: {
       documentData: true,
       documentMeta: true,
-      User: {
+      user: {
         select: {
           id: true,
           name: true,
+          email: true,
+        },
+      },
+      recipients: {
+        select: {
           email: true,
         },
       },
@@ -36,6 +46,14 @@ export const getDocumentById = async ({ id, userId, teamId }: GetDocumentByIdOpt
       },
     },
   });
+
+  if (!document) {
+    throw new AppError(AppErrorCode.NOT_FOUND, {
+      message: 'Document could not be found',
+    });
+  }
+
+  return document;
 };
 
 export type GetDocumentWhereInputOptions = {
@@ -101,19 +119,56 @@ export const getDocumentWhereInput = async ({
   if (team.teamEmail) {
     documentWhereInput.OR.push(
       {
-        Recipient: {
+        recipients: {
           some: {
             email: team.teamEmail.email,
           },
         },
       },
       {
-        User: {
+        user: {
           email: team.teamEmail.email,
         },
       },
     );
   }
 
-  return documentWhereInput;
+  const user = await prisma.user.findFirstOrThrow({
+    where: {
+      id: userId,
+    },
+  });
+
+  const visibilityFilters = [
+    ...match(team.currentTeamMember?.role)
+      .with(TeamMemberRole.ADMIN, () => [
+        { visibility: DocumentVisibility.EVERYONE },
+        { visibility: DocumentVisibility.MANAGER_AND_ABOVE },
+        { visibility: DocumentVisibility.ADMIN },
+      ])
+      .with(TeamMemberRole.MANAGER, () => [
+        { visibility: DocumentVisibility.EVERYONE },
+        { visibility: DocumentVisibility.MANAGER_AND_ABOVE },
+      ])
+      .otherwise(() => [{ visibility: DocumentVisibility.EVERYONE }]),
+    {
+      OR: [
+        {
+          recipients: {
+            some: {
+              email: user.email,
+            },
+          },
+        },
+        {
+          userId: user.id,
+        },
+      ],
+    },
+  ];
+
+  return {
+    ...documentWhereInput,
+    OR: [...visibilityFilters],
+  };
 };

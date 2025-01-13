@@ -1,19 +1,27 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
-import { ChevronLeft, DownloadIcon } from 'lucide-react';
+import type { MessageDescriptor } from '@lingui/core';
+import { Trans, msg } from '@lingui/macro';
+import { useLingui } from '@lingui/react';
+import { ChevronLeft } from 'lucide-react';
+import { DateTime } from 'luxon';
 
 import { getRequiredServerComponentSession } from '@documenso/lib/next-auth/get-server-component-session';
 import { getDocumentById } from '@documenso/lib/server-only/document/get-document-by-id';
 import { getRecipientsForDocument } from '@documenso/lib/server-only/recipient/get-recipients-for-document';
 import { formatDocumentsPath } from '@documenso/lib/utils/teams';
 import type { Recipient, Team } from '@documenso/prisma/client';
-import { Button } from '@documenso/ui/primitives/button';
 import { Card } from '@documenso/ui/primitives/card';
 
-import { FRIENDLY_STATUS_MAP } from '~/components/formatter/document-status';
+import {
+  DocumentStatus as DocumentStatusComponent,
+  FRIENDLY_STATUS_MAP,
+} from '~/components/formatter/document-status';
 
 import { DocumentLogsDataTable } from './document-logs-data-table';
+import { DownloadAuditLogButton } from './download-audit-log-button';
+import { DownloadCertificateButton } from './download-certificate-button';
 
 export type DocumentLogsPageViewProps = {
   params: {
@@ -23,6 +31,8 @@ export type DocumentLogsPageViewProps = {
 };
 
 export const DocumentLogsPageView = async ({ params, team }: DocumentLogsPageViewProps) => {
+  const { _, i18n } = useLingui();
+
   const { id } = params;
 
   const documentId = Number(id);
@@ -37,7 +47,7 @@ export const DocumentLogsPageView = async ({ params, team }: DocumentLogsPageVie
 
   const [document, recipients] = await Promise.all([
     getDocumentById({
-      id: documentId,
+      documentId,
       userId: user.id,
       teamId: team?.id,
     }).catch(() => null),
@@ -52,33 +62,39 @@ export const DocumentLogsPageView = async ({ params, team }: DocumentLogsPageVie
     redirect(documentRootPath);
   }
 
-  const documentInformation: { description: string; value: string }[] = [
+  const documentInformation: { description: MessageDescriptor; value: string }[] = [
     {
-      description: 'Document title',
+      description: msg`Document title`,
       value: document.title,
     },
     {
-      description: 'Document ID',
+      description: msg`Document ID`,
       value: document.id.toString(),
     },
     {
-      description: 'Document status',
-      value: FRIENDLY_STATUS_MAP[document.status].label,
+      description: msg`Document status`,
+      value: _(FRIENDLY_STATUS_MAP[document.status].label),
     },
     {
-      description: 'Created by',
-      value: document.User.name ?? document.User.email,
+      description: msg`Created by`,
+      value: document.user.name
+        ? `${document.user.name} (${document.user.email})`
+        : document.user.email,
     },
     {
-      description: 'Date created',
-      value: document.createdAt.toISOString(),
+      description: msg`Date created`,
+      value: DateTime.fromJSDate(document.createdAt)
+        .setLocale(i18n.locales?.[0] || i18n.locale)
+        .toLocaleString(DateTime.DATETIME_MED_WITH_SECONDS),
     },
     {
-      description: 'Last updated',
-      value: document.updatedAt.toISOString(),
+      description: msg`Last updated`,
+      value: DateTime.fromJSDate(document.updatedAt)
+        .setLocale(i18n.locales?.[0] || i18n.locale)
+        .toLocaleString(DateTime.DATETIME_MED_WITH_SECONDS),
     },
     {
-      description: 'Time zone',
+      description: msg`Time zone`,
       value: document.documentMeta?.timezone ?? 'N/A',
     },
   ];
@@ -90,7 +106,7 @@ export const DocumentLogsPageView = async ({ params, team }: DocumentLogsPageVie
       text = `${recipient.name} (${recipient.email})`;
     }
 
-    return `${text} - ${recipient.role}`;
+    return `[${recipient.role}] ${text}`;
   };
 
   return (
@@ -100,24 +116,36 @@ export const DocumentLogsPageView = async ({ params, team }: DocumentLogsPageVie
         className="flex items-center text-[#7AC455] hover:opacity-80"
       >
         <ChevronLeft className="mr-2 inline-block h-5 w-5" />
-        Document
+        <Trans>Document</Trans>
       </Link>
 
-      <div className="flex flex-col justify-between sm:flex-row">
-        <h1 className="mt-4 truncate text-2xl font-semibold md:text-3xl" title={document.title}>
-          {document.title}
-        </h1>
+      <div className="flex flex-col justify-between truncate sm:flex-row">
+        <div>
+          <h1
+            className="mt-4 block max-w-[20rem] truncate text-2xl font-semibold md:max-w-[30rem] md:text-3xl"
+            title={document.title}
+          >
+            {document.title}
+          </h1>
+
+          <div className="mt-2.5 flex items-center gap-x-6">
+            <DocumentStatusComponent
+              inheritColor
+              status={document.status}
+              className="text-muted-foreground"
+            />
+          </div>
+        </div>
 
         <div className="mt-4 flex w-full flex-row sm:mt-0 sm:w-auto sm:self-end">
-          <Button variant="outline" className="mr-2 w-full sm:w-auto">
-            <DownloadIcon className="mr-1.5 h-4 w-4" />
-            Download certificate
-          </Button>
+          <DownloadCertificateButton
+            className="mr-2"
+            documentId={document.id}
+            documentStatus={document.status}
+            teamId={team?.id}
+          />
 
-          <Button className="w-full sm:w-auto">
-            <DownloadIcon className="mr-1.5 h-4 w-4" />
-            Download PDF
-          </Button>
+          <DownloadAuditLogButton teamId={team?.id} documentId={document.id} />
         </div>
       </div>
 
@@ -125,7 +153,7 @@ export const DocumentLogsPageView = async ({ params, team }: DocumentLogsPageVie
         <Card className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2" degrees={45} gradient>
           {documentInformation.map((info, i) => (
             <div className="text-foreground text-sm" key={i}>
-              <h3 className="font-semibold">{info.description}</h3>
+              <h3 className="font-semibold">{_(info.description)}</h3>
               <p className="text-muted-foreground">{info.value}</p>
             </div>
           ))}

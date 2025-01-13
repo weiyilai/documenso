@@ -1,8 +1,10 @@
+import { type TFieldMetaSchema as FieldMeta } from '@documenso/lib/types/field-meta';
 import { prisma } from '@documenso/prisma';
 import type { FieldType, Team } from '@documenso/prisma/client';
 
+import { DOCUMENT_AUDIT_LOG_TYPE } from '../../types/document-audit-logs';
 import type { RequestMetadata } from '../../universal/extract-request-metadata';
-import { createDocumentAuditLogData } from '../../utils/document-audit-logs';
+import { createDocumentAuditLogData, diffFieldChanges } from '../../utils/document-audit-logs';
 
 export type UpdateFieldOptions = {
   fieldId: number;
@@ -17,6 +19,7 @@ export type UpdateFieldOptions = {
   pageWidth?: number;
   pageHeight?: number;
   requestMetadata?: RequestMetadata;
+  fieldMeta?: FieldMeta;
 };
 
 export const updateField = async ({
@@ -32,11 +35,16 @@ export const updateField = async ({
   pageWidth,
   pageHeight,
   requestMetadata,
+  fieldMeta,
 }: UpdateFieldOptions) => {
-  const field = await prisma.field.update({
+  if (type === 'FREE_SIGNATURE') {
+    throw new Error('Cannot update a FREE_SIGNATURE field');
+  }
+
+  const oldField = await prisma.field.findFirstOrThrow({
     where: {
       id: fieldId,
-      Document: {
+      document: {
         id: documentId,
         ...(teamId
           ? {
@@ -55,67 +63,80 @@ export const updateField = async ({
             }),
       },
     },
-    data: {
-      recipientId,
-      type,
-      page: pageNumber,
-      positionX: pageX,
-      positionY: pageY,
-      width: pageWidth,
-      height: pageHeight,
-    },
-    include: {
-      Recipient: true,
-    },
   });
 
-  if (!field) {
-    throw new Error('Field not found');
-  }
+  const newFieldMeta = {
+    ...(oldField.fieldMeta as FieldMeta),
+    ...fieldMeta,
+  };
 
-  const user = await prisma.user.findFirstOrThrow({
-    where: {
-      id: userId,
-    },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-    },
-  });
-
-  let team: Team | null = null;
-
-  if (teamId) {
-    team = await prisma.team.findFirst({
+  const field = prisma.$transaction(async (tx) => {
+    const updatedField = await tx.field.update({
       where: {
-        id: teamId,
-        members: {
-          some: {
-            userId,
-          },
-        },
-      },
-    });
-  }
-
-  await prisma.documentAuditLog.create({
-    data: createDocumentAuditLogData({
-      type: 'FIELD_UPDATED',
-      documentId,
-      user: {
-        id: team?.id ?? user.id,
-        email: team?.name ?? user.email,
-        name: team ? '' : user.name,
+        id: fieldId,
       },
       data: {
-        fieldId: field.secondaryId,
-        fieldRecipientEmail: field.Recipient?.email ?? '',
-        fieldRecipientId: recipientId ?? -1,
-        fieldType: field.type,
+        recipientId,
+        type,
+        page: pageNumber,
+        positionX: pageX,
+        positionY: pageY,
+        width: pageWidth,
+        height: pageHeight,
+        fieldMeta: newFieldMeta,
       },
-      requestMetadata,
-    }),
+      include: {
+        recipient: true,
+      },
+    });
+
+    const user = await prisma.user.findFirstOrThrow({
+      where: {
+        id: userId,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+      },
+    });
+
+    let team: Team | null = null;
+
+    if (teamId) {
+      team = await prisma.team.findFirst({
+        where: {
+          id: teamId,
+          members: {
+            some: {
+              userId,
+            },
+          },
+        },
+      });
+    }
+
+    await tx.documentAuditLog.create({
+      data: createDocumentAuditLogData({
+        type: DOCUMENT_AUDIT_LOG_TYPE.FIELD_UPDATED,
+        documentId,
+        user: {
+          id: team?.id ?? user.id,
+          email: team?.name ?? user.email,
+          name: team ? '' : user.name,
+        },
+        data: {
+          fieldId: updatedField.secondaryId,
+          fieldRecipientEmail: updatedField.recipient?.email ?? '',
+          fieldRecipientId: recipientId ?? -1,
+          fieldType: updatedField.type,
+          changes: diffFieldChanges(oldField, updatedField),
+        },
+        requestMetadata,
+      }),
+    });
+
+    return updatedField;
   });
 
   return field;

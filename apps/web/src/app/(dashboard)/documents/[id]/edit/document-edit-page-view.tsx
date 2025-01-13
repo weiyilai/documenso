@@ -1,16 +1,19 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
+import { Plural, Trans } from '@lingui/macro';
 import { ChevronLeft, Users2 } from 'lucide-react';
+import { match } from 'ts-pattern';
 
+import { isUserEnterprise } from '@documenso/ee/server-only/util/is-document-enterprise';
 import { DOCUMENSO_ENCRYPTION_KEY } from '@documenso/lib/constants/crypto';
 import { getRequiredServerComponentSession } from '@documenso/lib/next-auth/get-server-component-session';
-import { getDocumentById } from '@documenso/lib/server-only/document/get-document-by-id';
-import { getFieldsForDocument } from '@documenso/lib/server-only/field/get-fields-for-document';
-import { getRecipientsForDocument } from '@documenso/lib/server-only/recipient/get-recipients-for-document';
+import { getDocumentWithDetailsById } from '@documenso/lib/server-only/document/get-document-with-details-by-id';
+import { DocumentVisibility } from '@documenso/lib/types/document-visibility';
 import { symmetricDecrypt } from '@documenso/lib/universal/crypto';
 import { formatDocumentsPath } from '@documenso/lib/utils/teams';
 import type { Team } from '@documenso/prisma/client';
+import { TeamMemberRole } from '@documenso/prisma/client';
 import { DocumentStatus as InternalDocumentStatus } from '@documenso/prisma/client';
 
 import { EditDocumentForm } from '~/app/(dashboard)/documents/[id]/edit-document';
@@ -21,7 +24,7 @@ export type DocumentEditPageViewProps = {
   params: {
     id: string;
   };
-  team?: Team;
+  team?: Team & { currentTeamMember: { role: TeamMemberRole } };
 };
 
 export const DocumentEditPageView = async ({ params, team }: DocumentEditPageViewProps) => {
@@ -37,13 +40,37 @@ export const DocumentEditPageView = async ({ params, team }: DocumentEditPageVie
 
   const { user } = await getRequiredServerComponentSession();
 
-  const document = await getDocumentById({
-    id: documentId,
+  const document = await getDocumentWithDetailsById({
+    documentId,
     userId: user.id,
     teamId: team?.id,
   }).catch(() => null);
 
-  if (!document || !document.documentData) {
+  if (document?.teamId && !team?.url) {
+    redirect(documentRootPath);
+  }
+
+  const documentVisibility = document?.visibility;
+  const currentTeamMemberRole = team?.currentTeamMember?.role;
+  const isRecipient = document?.recipients.find((recipient) => recipient.email === user.email);
+  let canAccessDocument = true;
+
+  if (!isRecipient && document?.userId !== user.id) {
+    canAccessDocument = match([documentVisibility, currentTeamMemberRole])
+      .with([DocumentVisibility.EVERYONE, TeamMemberRole.ADMIN], () => true)
+      .with([DocumentVisibility.EVERYONE, TeamMemberRole.MANAGER], () => true)
+      .with([DocumentVisibility.EVERYONE, TeamMemberRole.MEMBER], () => true)
+      .with([DocumentVisibility.MANAGER_AND_ABOVE, TeamMemberRole.ADMIN], () => true)
+      .with([DocumentVisibility.MANAGER_AND_ABOVE, TeamMemberRole.MANAGER], () => true)
+      .with([DocumentVisibility.ADMIN, TeamMemberRole.ADMIN], () => true)
+      .otherwise(() => false);
+  }
+
+  if (!document) {
+    redirect(documentRootPath);
+  }
+
+  if (team && !canAccessDocument) {
     redirect(documentRootPath);
   }
 
@@ -51,7 +78,7 @@ export const DocumentEditPageView = async ({ params, team }: DocumentEditPageVie
     redirect(`${documentRootPath}/${documentId}`);
   }
 
-  const { documentData, documentMeta } = document;
+  const { documentMeta, recipients } = document;
 
   if (documentMeta?.password) {
     const key = DOCUMENSO_ENCRYPTION_KEY;
@@ -70,26 +97,22 @@ export const DocumentEditPageView = async ({ params, team }: DocumentEditPageVie
     documentMeta.password = securePassword;
   }
 
-  const [recipients, fields] = await Promise.all([
-    getRecipientsForDocument({
-      documentId,
-      userId: user.id,
-      teamId: team?.id,
-    }),
-    getFieldsForDocument({
-      documentId,
-      userId: user.id,
-    }),
-  ]);
+  const isDocumentEnterprise = await isUserEnterprise({
+    userId: user.id,
+    teamId: team?.id,
+  });
 
   return (
     <div className="mx-auto -mt-4 w-full max-w-screen-xl px-4 md:px-8">
       <Link href={documentRootPath} className="flex items-center text-[#7AC455] hover:opacity-80">
         <ChevronLeft className="mr-2 inline-block h-5 w-5" />
-        Documents
+        <Trans>Documents</Trans>
       </Link>
 
-      <h1 className="mt-4 truncate text-2xl font-semibold md:text-3xl" title={document.title}>
+      <h1
+        className="mt-4 block max-w-[20rem] truncate text-2xl font-semibold md:max-w-[30rem] md:text-3xl"
+        title={document.title}
+      >
         {document.title}
       </h1>
 
@@ -100,22 +123,24 @@ export const DocumentEditPageView = async ({ params, team }: DocumentEditPageVie
           <div className="text-muted-foreground flex items-center">
             <Users2 className="mr-2 h-5 w-5" />
 
-            <StackAvatarsWithTooltip recipients={recipients} position="bottom">
-              <span>{recipients.length} Recipient(s)</span>
+            <StackAvatarsWithTooltip
+              recipients={recipients}
+              documentStatus={document.status}
+              position="bottom"
+            >
+              <span>
+                <Plural one="1 Recipient" other="# Recipients" value={recipients.length} />
+              </span>
             </StackAvatarsWithTooltip>
           </div>
         )}
       </div>
 
       <EditDocumentForm
-        className="mt-8"
-        document={document}
-        user={user}
-        documentMeta={documentMeta}
-        recipients={recipients}
-        fields={fields}
-        documentData={documentData}
+        className="mt-6"
+        initialDocument={document}
         documentRootPath={documentRootPath}
+        isDocumentEnterprise={isDocumentEnterprise}
       />
     </div>
   );

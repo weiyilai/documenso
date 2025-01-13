@@ -2,8 +2,14 @@ import { useEffect, useState } from 'react';
 
 import { useRouter } from 'next/navigation';
 
+import { Trans, msg } from '@lingui/macro';
+import { useLingui } from '@lingui/react';
+import { match } from 'ts-pattern';
+
+import { useLimits } from '@documenso/ee/server-only/limits/provider/client';
 import { DocumentStatus } from '@documenso/prisma/client';
 import { trpc as trpcReact } from '@documenso/trpc/react';
+import { Alert, AlertDescription } from '@documenso/ui/primitives/alert';
 import { Button } from '@documenso/ui/primitives/button';
 import {
   Dialog,
@@ -23,6 +29,7 @@ type DeleteDocumentDialogProps = {
   status: DocumentStatus;
   documentTitle: string;
   teamId?: number;
+  canManageDocument: boolean;
 };
 
 export const DeleteDocumentDialog = ({
@@ -31,11 +38,15 @@ export const DeleteDocumentDialog = ({
   onOpenChange,
   status,
   documentTitle,
-  teamId,
+  canManageDocument,
 }: DeleteDocumentDialogProps) => {
   const router = useRouter();
 
   const { toast } = useToast();
+  const { refreshLimits } = useLimits();
+  const { _ } = useLingui();
+
+  const deleteMessage = msg`delete`;
 
   const [inputValue, setInputValue] = useState('');
   const [isDeleteEnabled, setIsDeleteEnabled] = useState(status === DocumentStatus.DRAFT);
@@ -43,10 +54,11 @@ export const DeleteDocumentDialog = ({
   const { mutateAsync: deleteDocument, isLoading } = trpcReact.document.deleteDocument.useMutation({
     onSuccess: () => {
       router.refresh();
+      void refreshLimits();
 
       toast({
-        title: 'Document deleted',
-        description: `"${documentTitle}" has been successfully deleted`,
+        title: _(msg`Document deleted`),
+        description: _(msg`"${documentTitle}" has been successfully deleted`),
         duration: 5000,
       });
 
@@ -63,11 +75,11 @@ export const DeleteDocumentDialog = ({
 
   const onDelete = async () => {
     try {
-      await deleteDocument({ id, teamId });
+      await deleteDocument({ documentId: id });
     } catch {
       toast({
-        title: 'Something went wrong',
-        description: 'This document could not be deleted at this time. Please try again.',
+        title: _(msg`Something went wrong`),
+        description: _(msg`This document could not be deleted at this time. Please try again.`),
         variant: 'destructive',
         duration: 7500,
       });
@@ -76,54 +88,118 @@ export const DeleteDocumentDialog = ({
 
   const onInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setInputValue(event.target.value);
-    setIsDeleteEnabled(event.target.value === 'delete');
+    setIsDeleteEnabled(event.target.value === _(deleteMessage));
   };
 
   return (
     <Dialog open={open} onOpenChange={(value) => !isLoading && onOpenChange(value)}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Are you sure you want to delete "{documentTitle}"?</DialogTitle>
+          <DialogTitle>
+            <Trans>Are you sure?</Trans>
+          </DialogTitle>
 
           <DialogDescription>
-            Please note that this action is irreversible. Once confirmed, your document will be
-            permanently deleted.
+            {canManageDocument ? (
+              <Trans>
+                You are about to delete <strong>"{documentTitle}"</strong>
+              </Trans>
+            ) : (
+              <Trans>
+                You are about to hide <strong>"{documentTitle}"</strong>
+              </Trans>
+            )}
           </DialogDescription>
         </DialogHeader>
 
-        {status !== DocumentStatus.DRAFT && (
-          <div className="mt-4">
-            <Input
-              type="text"
-              value={inputValue}
-              onChange={onInputChange}
-              placeholder="Type 'delete' to confirm"
-            />
-          </div>
+        {canManageDocument ? (
+          <Alert variant="warning" className="-mt-1">
+            {match(status)
+              .with(DocumentStatus.DRAFT, () => (
+                <AlertDescription>
+                  <Trans>
+                    Please note that this action is <strong>irreversible</strong>. Once confirmed,
+                    this document will be permanently deleted.
+                  </Trans>
+                </AlertDescription>
+              ))
+              .with(DocumentStatus.PENDING, () => (
+                <AlertDescription>
+                  <p>
+                    <Trans>
+                      Please note that this action is <strong>irreversible</strong>.
+                    </Trans>
+                  </p>
+
+                  <p className="mt-1">
+                    <Trans>Once confirmed, the following will occur:</Trans>
+                  </p>
+
+                  <ul className="mt-0.5 list-inside list-disc">
+                    <li>
+                      <Trans>Document will be permanently deleted</Trans>
+                    </li>
+                    <li>
+                      <Trans>Document signing process will be cancelled</Trans>
+                    </li>
+                    <li>
+                      <Trans>All inserted signatures will be voided</Trans>
+                    </li>
+                    <li>
+                      <Trans>All recipients will be notified</Trans>
+                    </li>
+                  </ul>
+                </AlertDescription>
+              ))
+              .with(DocumentStatus.COMPLETED, () => (
+                <AlertDescription>
+                  <p>
+                    <Trans>By deleting this document, the following will occur:</Trans>
+                  </p>
+
+                  <ul className="mt-0.5 list-inside list-disc">
+                    <li>
+                      <Trans>The document will be hidden from your account</Trans>
+                    </li>
+                    <li>
+                      <Trans>Recipients will still retain their copy of the document</Trans>
+                    </li>
+                  </ul>
+                </AlertDescription>
+              ))
+              .exhaustive()}
+          </Alert>
+        ) : (
+          <Alert variant="warning" className="-mt-1">
+            <AlertDescription>
+              <Trans>Please contact support if you would like to revert this action.</Trans>
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {status !== DocumentStatus.DRAFT && canManageDocument && (
+          <Input
+            type="text"
+            value={inputValue}
+            onChange={onInputChange}
+            placeholder={_(msg`Please type ${`'${_(deleteMessage)}'`} to confirm`)}
+          />
         )}
 
         <DialogFooter>
-          <div className="flex w-full flex-1 flex-nowrap gap-4">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => onOpenChange(false)}
-              className="flex-1"
-            >
-              Cancel
-            </Button>
+          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
+            <Trans>Cancel</Trans>
+          </Button>
 
-            <Button
-              type="button"
-              loading={isLoading}
-              onClick={onDelete}
-              disabled={!isDeleteEnabled}
-              variant="destructive"
-              className="flex-1"
-            >
-              Delete
-            </Button>
-          </div>
+          <Button
+            type="button"
+            loading={isLoading}
+            onClick={onDelete}
+            disabled={!isDeleteEnabled && canManageDocument}
+            variant="destructive"
+          >
+            {canManageDocument ? _(msg`Delete`) : _(msg`Hide`)}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -4,18 +4,27 @@ import { useCallback, useMemo, useState } from 'react';
 
 import { useRouter } from 'next/navigation';
 
-import { Loader, Monitor, Moon, Sun } from 'lucide-react';
-import { useSession } from 'next-auth/react';
+import type { MessageDescriptor } from '@lingui/core';
+import { Trans, msg } from '@lingui/macro';
+import { useLingui } from '@lingui/react';
+import { CheckIcon, Loader, Monitor, Moon, Sun } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useHotkeys } from 'react-hotkeys-hook';
 
+import { SUPPORTED_LANGUAGES } from '@documenso/lib/constants/i18n';
 import {
   DOCUMENTS_PAGE_SHORTCUT,
   SETTINGS_PAGE_SHORTCUT,
   TEMPLATES_PAGE_SHORTCUT,
 } from '@documenso/lib/constants/keyboard-shortcuts';
-import type { Document, Recipient } from '@documenso/prisma/client';
+import {
+  DO_NOT_INVALIDATE_QUERY_ON_MUTATION,
+  SKIP_QUERY_BATCH_META,
+} from '@documenso/lib/constants/trpc';
+import { switchI18NLanguage } from '@documenso/lib/server-only/i18n/switch-i18n-language';
+import { dynamicActivate } from '@documenso/lib/utils/i18n';
 import { trpc as trpcReact } from '@documenso/trpc/react';
+import { cn } from '@documenso/ui/lib/utils';
 import {
   CommandDialog,
   CommandEmpty,
@@ -26,25 +35,26 @@ import {
   CommandShortcut,
 } from '@documenso/ui/primitives/command';
 import { THEMES_TYPE } from '@documenso/ui/primitives/constants';
+import { useToast } from '@documenso/ui/primitives/use-toast';
 
 const DOCUMENTS_PAGES = [
   {
-    label: 'All documents',
+    label: msg`All documents`,
     path: '/documents?status=ALL',
     shortcut: DOCUMENTS_PAGE_SHORTCUT.replace('+', ''),
   },
-  { label: 'Draft documents', path: '/documents?status=DRAFT' },
+  { label: msg`Draft documents`, path: '/documents?status=DRAFT' },
   {
-    label: 'Completed documents',
+    label: msg`Completed documents`,
     path: '/documents?status=COMPLETED',
   },
-  { label: 'Pending documents', path: '/documents?status=PENDING' },
-  { label: 'Inbox documents', path: '/documents?status=INBOX' },
+  { label: msg`Pending documents`, path: '/documents?status=PENDING' },
+  { label: msg`Inbox documents`, path: '/documents?status=INBOX' },
 ];
 
 const TEMPLATES_PAGES = [
   {
-    label: 'All templates',
+    label: msg`All templates`,
     path: '/templates',
     shortcut: TEMPLATES_PAGE_SHORTCUT.replace('+', ''),
   },
@@ -52,12 +62,12 @@ const TEMPLATES_PAGES = [
 
 const SETTINGS_PAGES = [
   {
-    label: 'Settings',
+    label: msg`Settings`,
     path: '/settings',
     shortcut: SETTINGS_PAGE_SHORTCUT.replace('+', ''),
   },
-  { label: 'Profile', path: '/settings/profile' },
-  { label: 'Password', path: '/settings/password' },
+  { label: msg`Profile`, path: '/settings/profile' },
+  { label: msg`Password`, path: '/settings/password' },
 ];
 
 export type CommandMenuProps = {
@@ -66,8 +76,8 @@ export type CommandMenuProps = {
 };
 
 export function CommandMenu({ open, onOpenChange }: CommandMenuProps) {
+  const { _ } = useLingui();
   const { setTheme } = useTheme();
-  const { data: session } = useSession();
 
   const router = useRouter();
 
@@ -82,19 +92,12 @@ export function CommandMenu({ open, onOpenChange }: CommandMenuProps) {
       },
       {
         keepPreviousData: true,
+        // Do not batch this due to relatively long request time compared to
+        // other queries which are generally batched with this.
+        ...SKIP_QUERY_BATCH_META,
+        ...DO_NOT_INVALIDATE_QUERY_ON_MUTATION,
       },
     );
-
-  const isOwner = useCallback(
-    (document: Document) => document.userId === session?.user.id,
-    [session?.user.id],
-  );
-
-  const getSigningLink = useCallback(
-    (recipients: Recipient[]) =>
-      `/sign/${recipients.find((r) => r.email === session?.user.email)?.token}`,
-    [session?.user.email],
-  );
 
   const searchResults = useMemo(() => {
     if (!searchDocumentsData) {
@@ -103,10 +106,10 @@ export function CommandMenu({ open, onOpenChange }: CommandMenuProps) {
 
     return searchDocumentsData.map((document) => ({
       label: document.title,
-      path: isOwner(document) ? `/documents/${document.id}` : getSigningLink(document.Recipient),
-      value: [document.id, document.title, ...document.Recipient.map((r) => r.email)].join(' '),
+      path: document.path,
+      value: document.value,
     }));
-  }, [searchDocumentsData, isOwner, getSigningLink]);
+  }, [searchDocumentsData]);
 
   const currentPage = pages[pages.length - 1];
 
@@ -180,7 +183,7 @@ export function CommandMenu({ open, onOpenChange }: CommandMenuProps) {
       <CommandInput
         value={search}
         onValueChange={setSearch}
-        placeholder="Type a command or search..."
+        placeholder={_(msg`Type a command or search...`)}
       />
 
       <CommandList>
@@ -193,32 +196,39 @@ export function CommandMenu({ open, onOpenChange }: CommandMenuProps) {
             </div>
           </CommandEmpty>
         ) : (
-          <CommandEmpty>No results found.</CommandEmpty>
+          <CommandEmpty>
+            <Trans>No results found.</Trans>
+          </CommandEmpty>
         )}
         {!currentPage && (
           <>
-            <CommandGroup className="mx-2 p-0 pb-2" heading="Documents">
+            <CommandGroup className="mx-2 p-0 pb-2" heading={_(msg`Documents`)}>
               <Commands push={push} pages={DOCUMENTS_PAGES} />
             </CommandGroup>
-            <CommandGroup className="mx-2 p-0 pb-2" heading="Templates">
+            <CommandGroup className="mx-2 p-0 pb-2" heading={_(msg`Templates`)}>
               <Commands push={push} pages={TEMPLATES_PAGES} />
             </CommandGroup>
-            <CommandGroup className="mx-2 p-0 pb-2" heading="Settings">
+            <CommandGroup className="mx-2 p-0 pb-2" heading={_(msg`Settings`)}>
               <Commands push={push} pages={SETTINGS_PAGES} />
             </CommandGroup>
-            <CommandGroup className="mx-2 p-0 pb-2" heading="Preferences">
+            <CommandGroup className="mx-2 p-0 pb-2" heading={_(msg`Preferences`)}>
+              <CommandItem className="-mx-2 -my-1 rounded-lg" onSelect={() => addPage('language')}>
+                Change language
+              </CommandItem>
               <CommandItem className="-mx-2 -my-1 rounded-lg" onSelect={() => addPage('theme')}>
                 Change theme
               </CommandItem>
             </CommandGroup>
             {searchResults.length > 0 && (
-              <CommandGroup className="mx-2 p-0 pb-2" heading="Your documents">
+              <CommandGroup className="mx-2 p-0 pb-2" heading={_(msg`Your documents`)}>
                 <Commands push={push} pages={searchResults} />
               </CommandGroup>
             )}
           </>
         )}
+
         {currentPage === 'theme' && <ThemeCommands setTheme={setTheme} />}
+        {currentPage === 'language' && <LanguageCommands />}
       </CommandList>
     </CommandDialog>
   );
@@ -229,27 +239,31 @@ const Commands = ({
   pages,
 }: {
   push: (_path: string) => void;
-  pages: { label: string; path: string; shortcut?: string; value?: string }[];
+  pages: { label: MessageDescriptor | string; path: string; shortcut?: string; value?: string }[];
 }) => {
+  const { _ } = useLingui();
+
   return pages.map((page, idx) => (
     <CommandItem
       className="-mx-2 -my-1 rounded-lg"
       key={page.path + idx}
-      value={page.value ?? page.label}
+      value={page.value ?? (typeof page.label === 'string' ? page.label : _(page.label))}
       onSelect={() => push(page.path)}
     >
-      {page.label}
+      {typeof page.label === 'string' ? page.label : _(page.label)}
       {page.shortcut && <CommandShortcut>{page.shortcut}</CommandShortcut>}
     </CommandItem>
   ));
 };
 
 const ThemeCommands = ({ setTheme }: { setTheme: (_theme: string) => void }) => {
+  const { _ } = useLingui();
+
   const THEMES = useMemo(
     () => [
-      { label: 'Light Mode', theme: THEMES_TYPE.LIGHT, icon: Sun },
-      { label: 'Dark Mode', theme: THEMES_TYPE.DARK, icon: Moon },
-      { label: 'System Theme', theme: THEMES_TYPE.SYSTEM, icon: Monitor },
+      { label: msg`Light Mode`, theme: THEMES_TYPE.LIGHT, icon: Sun },
+      { label: msg`Dark Mode`, theme: THEMES_TYPE.DARK, icon: Moon },
+      { label: msg`System Theme`, theme: THEMES_TYPE.SYSTEM, icon: Monitor },
     ],
     [],
   );
@@ -261,7 +275,50 @@ const ThemeCommands = ({ setTheme }: { setTheme: (_theme: string) => void }) => 
       className="-my-1 mx-2 rounded-lg first:mt-2 last:mb-2"
     >
       <theme.icon className="mr-2" />
-      {theme.label}
+      {_(theme.label)}
+    </CommandItem>
+  ));
+};
+
+const LanguageCommands = () => {
+  const { i18n, _ } = useLingui();
+  const { toast } = useToast();
+
+  const [isLoading, setIsLoading] = useState(false);
+
+  const setLanguage = async (lang: string) => {
+    if (isLoading || lang === i18n.locale) {
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      await dynamicActivate(i18n, lang);
+      await switchI18NLanguage(lang);
+    } catch (err) {
+      toast({
+        title: _(msg`An unknown error occurred`),
+        variant: 'destructive',
+        description: _(msg`Unable to change the language at this time. Please try again later.`),
+      });
+    }
+
+    setIsLoading(false);
+  };
+
+  return Object.values(SUPPORTED_LANGUAGES).map((language) => (
+    <CommandItem
+      disabled={isLoading}
+      key={language.full}
+      onSelect={async () => setLanguage(language.short)}
+      className="-my-1 mx-2 rounded-lg first:mt-2 last:mb-2"
+    >
+      <CheckIcon
+        className={cn('mr-2 h-4 w-4', i18n.locale === language.short ? 'opacity-100' : 'opacity-0')}
+      />
+
+      {language.full}
     </CommandItem>
   ));
 };

@@ -2,7 +2,9 @@
 
 import { useMemo } from 'react';
 
-import { CheckCheckIcon, CheckIcon, Loader, MailOpen } from 'lucide-react';
+import { Trans, msg } from '@lingui/macro';
+import { useLingui } from '@lingui/react';
+import { AlertTriangle, CheckCheckIcon, CheckIcon, Loader, MailOpen } from 'lucide-react';
 import { DateTime } from 'luxon';
 import { match } from 'ts-pattern';
 
@@ -21,6 +23,8 @@ export const DocumentPageViewRecentActivity = ({
   documentId,
   userId,
 }: DocumentPageViewRecentActivityProps) => {
+  const { _ } = useLingui();
+
   const {
     data,
     isLoading,
@@ -33,10 +37,8 @@ export const DocumentPageViewRecentActivity = ({
     {
       documentId,
       filterForRecentActivity: true,
-      orderBy: {
-        column: 'createdAt',
-        direction: 'asc',
-      },
+      orderByColumn: 'createdAt',
+      orderByDirection: 'asc',
       perPage: 10,
     },
     {
@@ -49,7 +51,9 @@ export const DocumentPageViewRecentActivity = ({
   return (
     <section className="dark:bg-background border-border bg-widget flex flex-col rounded-xl border">
       <div className="flex flex-row items-center justify-between border-b px-4 py-3">
-        <h1 className="text-foreground font-medium">Recent activity</h1>
+        <h1 className="text-foreground font-medium">
+          <Trans>Recent activity</Trans>
+        </h1>
 
         {/* Can add dropdown menu here for additional options. */}
       </div>
@@ -62,12 +66,14 @@ export const DocumentPageViewRecentActivity = ({
 
       {isLoadingError && (
         <div className="flex h-full flex-col items-center justify-center py-16">
-          <p className="text-foreground/80 text-sm">Unable to load document history</p>
+          <p className="text-foreground/80 text-sm">
+            <Trans>Unable to load document history</Trans>
+          </p>
           <button
             onClick={async () => refetch()}
             className="text-foreground/70 hover:text-muted-foreground mt-2 text-sm"
           >
-            Click here to retry
+            <Trans>Click here to retry</Trans>
           </button>
         </div>
       )}
@@ -89,14 +95,16 @@ export const DocumentPageViewRecentActivity = ({
                   onClick={async () => fetchNextPage()}
                   className="text-foreground/70 hover:text-muted-foreground text-xs"
                 >
-                  {isFetchingNextPage ? 'Loading...' : 'Load older activity'}
+                  {isFetchingNextPage ? _(msg`Loading...`) : _(msg`Load older activity`)}
                 </button>
               </li>
             )}
 
             {documentAuditLogs.length === 0 && (
               <div className="flex items-center justify-center py-4">
-                <p className="text-muted-foreground/70 text-sm">No recent activity</p>
+                <p className="text-muted-foreground/70 text-sm">
+                  <Trans>No recent activity</Trans>
+                </p>
               </div>
             )}
 
@@ -123,6 +131,11 @@ export const DocumentPageViewRecentActivity = ({
                         <CheckIcon className="h-3 w-3" aria-hidden="true" />
                       </div>
                     ))
+                    .with(DOCUMENT_AUDIT_LOG_TYPE.DOCUMENT_RECIPIENT_REJECTED, () => (
+                      <div className="bg-widget rounded-full border border-gray-300 p-1 dark:border-neutral-600">
+                        <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                      </div>
+                    ))
                     .with(DOCUMENT_AUDIT_LOG_TYPE.DOCUMENT_OPENED, () => (
                       <div className="bg-widget rounded-full border border-gray-300 p-1 dark:border-neutral-600">
                         <MailOpen className="h-3 w-3" aria-hidden="true" />
@@ -133,11 +146,11 @@ export const DocumentPageViewRecentActivity = ({
                     ))}
                 </div>
 
-                <p className="text-muted-foreground dark:text-muted-foreground/70 flex-auto py-0.5 text-xs leading-5">
-                  <span className="text-foreground font-medium">
-                    {formatDocumentAuditLogAction(auditLog, userId).prefix}
-                  </span>{' '}
-                  {formatDocumentAuditLogAction(auditLog, userId).description}
+                <p
+                  className="text-muted-foreground dark:text-muted-foreground/70 flex-auto truncate py-0.5 text-xs leading-5"
+                  title={formatDocumentAuditLogAction(_, auditLog, userId).description}
+                >
+                  {formatDocumentAuditLogAction(_, auditLog, userId).description}
                 </p>
 
                 <time className="text-muted-foreground dark:text-muted-foreground/70 flex-none py-0.5 text-xs leading-5">

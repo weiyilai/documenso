@@ -1,38 +1,33 @@
 'use client';
 
-import { useEffect } from 'react';
-
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Info } from 'lucide-react';
-import { Controller, useForm } from 'react-hook-form';
+import { Trans, msg } from '@lingui/macro';
+import { useLingui } from '@lingui/react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { useForm } from 'react-hook-form';
 
-import { DATE_FORMATS, DEFAULT_DOCUMENT_DATE_FORMAT } from '@documenso/lib/constants/date-formats';
-import { DEFAULT_DOCUMENT_TIME_ZONE, TIME_ZONES } from '@documenso/lib/constants/time-zones';
+import { RECIPIENT_ROLES_DESCRIPTION } from '@documenso/lib/constants/recipient-roles';
+import { ZDocumentEmailSettingsSchema } from '@documenso/lib/types/document-email';
+import { formatSigningLink } from '@documenso/lib/utils/recipients';
 import type { Field, Recipient } from '@documenso/prisma/client';
-import { DocumentStatus } from '@documenso/prisma/client';
-import { SendStatus } from '@documenso/prisma/client';
+import {
+  DocumentDistributionMethod,
+  DocumentStatus,
+  RecipientRole,
+} from '@documenso/prisma/client';
 import type { DocumentWithData } from '@documenso/prisma/types/document-with-data';
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from '@documenso/ui/primitives/accordion';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@documenso/ui/primitives/select';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@documenso/ui/primitives/tooltip';
+import { DocumentSendEmailMessageHelper } from '@documenso/ui/components/document/document-send-email-message-helper';
+import { Tabs, TabsList, TabsTrigger } from '@documenso/ui/primitives/tabs';
 
-import { Combobox } from '../combobox';
+import { CopyTextButton } from '../../components/common/copy-text-button';
+import { DocumentEmailCheckboxes } from '../../components/document/document-email-checkboxes';
+import { AvatarWithText } from '../avatar';
 import { FormErrorMessage } from '../form/form-error-message';
 import { Input } from '../input';
 import { Label } from '../label';
 import { useStep } from '../stepper';
 import { Textarea } from '../textarea';
+import { toast } from '../use-toast';
 import { type TAddSubjectFormSchema, ZAddSubjectFormSchema } from './add-subject.types';
 import {
   DocumentFlowFormContainerActions,
@@ -50,6 +45,7 @@ export type AddSubjectFormProps = {
   fields: Field[];
   document: DocumentWithData;
   onSubmit: (_data: TAddSubjectFormSchema) => void;
+  isDocumentPdfLoaded: boolean;
 };
 
 export const AddSubjectFormPartial = ({
@@ -58,42 +54,49 @@ export const AddSubjectFormPartial = ({
   fields: fields,
   document,
   onSubmit,
+  isDocumentPdfLoaded,
 }: AddSubjectFormProps) => {
+  const { _ } = useLingui();
+
   const {
-    control,
     register,
     handleSubmit,
-    formState: { errors, isSubmitting, touchedFields },
     setValue,
+    watch,
+    formState: { errors, isSubmitting },
   } = useForm<TAddSubjectFormSchema>({
     defaultValues: {
       meta: {
         subject: document.documentMeta?.subject ?? '',
         message: document.documentMeta?.message ?? '',
-        timezone: document.documentMeta?.timezone ?? DEFAULT_DOCUMENT_TIME_ZONE,
-        dateFormat: document.documentMeta?.dateFormat ?? DEFAULT_DOCUMENT_DATE_FORMAT,
-        redirectUrl: document.documentMeta?.redirectUrl ?? '',
+        distributionMethod:
+          document.documentMeta?.distributionMethod || DocumentDistributionMethod.EMAIL,
+        emailSettings: ZDocumentEmailSettingsSchema.parse(document?.documentMeta?.emailSettings),
       },
     },
     resolver: zodResolver(ZAddSubjectFormSchema),
   });
 
+  const GoNextLabel = {
+    [DocumentDistributionMethod.EMAIL]: {
+      [DocumentStatus.DRAFT]: msg`Send`,
+      [DocumentStatus.PENDING]: recipients.some((recipient) => recipient.sendStatus === 'SENT')
+        ? msg`Resend`
+        : msg`Send`,
+      [DocumentStatus.COMPLETED]: msg`Update`,
+    },
+    [DocumentDistributionMethod.NONE]: {
+      [DocumentStatus.DRAFT]: msg`Generate Links`,
+      [DocumentStatus.PENDING]: msg`View Document`,
+      [DocumentStatus.COMPLETED]: msg`View Document`,
+    },
+  };
+
+  const distributionMethod = watch('meta.distributionMethod');
+  const emailSettings = watch('meta.emailSettings');
+
   const onFormSubmit = handleSubmit(onSubmit);
   const { currentStep, totalSteps, previousStep } = useStep();
-
-  const hasDateField = fields.find((field) => field.type === 'DATE');
-
-  const documentHasBeenSent = recipients.some(
-    (recipient) => recipient.sendStatus === SendStatus.SENT,
-  );
-
-  // We almost always want to set the timezone to the user's local timezone to avoid confusion
-  // when the document is signed.
-  useEffect(() => {
-    if (!touchedFields.meta?.timezone && !documentHasBeenSent) {
-      setValue('meta.timezone', Intl.DateTimeFormat().resolvedOptions().timeZone);
-    }
-  }, [documentHasBeenSent, setValue, touchedFields.meta?.timezone]);
 
   return (
     <>
@@ -103,174 +106,173 @@ export const AddSubjectFormPartial = ({
       />
       <DocumentFlowFormContainerContent>
         <div className="flex flex-col">
-          {fields.map((field, index) => (
-            <ShowFieldItem key={index} field={field} recipients={recipients} />
-          ))}
+          {isDocumentPdfLoaded &&
+            fields.map((field, index) => (
+              <ShowFieldItem key={index} field={field} recipients={recipients} />
+            ))}
 
-          <div className="flex flex-col gap-y-4">
-            <div>
-              <Label htmlFor="subject">
-                Subject <span className="text-muted-foreground">(Optional)</span>
-              </Label>
+          <Tabs
+            onValueChange={(value) =>
+              // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+              setValue('meta.distributionMethod', value as DocumentDistributionMethod)
+            }
+            value={distributionMethod}
+            className="mb-2"
+          >
+            <TabsList className="w-full">
+              <TabsTrigger className="w-full" value={DocumentDistributionMethod.EMAIL}>
+                Email
+              </TabsTrigger>
+              <TabsTrigger className="w-full" value={DocumentDistributionMethod.NONE}>
+                None
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
 
-              <Input
-                id="subject"
-                className="bg-background mt-2"
-                disabled={isSubmitting}
-                {...register('meta.subject')}
-              />
+          <AnimatePresence mode="wait">
+            {distributionMethod === DocumentDistributionMethod.EMAIL && (
+              <motion.div
+                key={'Emails'}
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0, transition: { duration: 0.3 } }}
+                exit={{ opacity: 0, transition: { duration: 0.15 } }}
+                className="flex flex-col gap-y-4 rounded-lg border p-4"
+              >
+                <div>
+                  <Label htmlFor="subject">
+                    <Trans>
+                      Subject <span className="text-muted-foreground">(Optional)</span>
+                    </Trans>
+                  </Label>
 
-              <FormErrorMessage className="mt-2" error={errors.meta?.subject} />
-            </div>
+                  <Input
+                    id="subject"
+                    className="bg-background mt-2"
+                    disabled={isSubmitting}
+                    {...register('meta.subject')}
+                  />
 
-            <div>
-              <Label htmlFor="message">
-                Message <span className="text-muted-foreground">(Optional)</span>
-              </Label>
+                  <FormErrorMessage className="mt-2" error={errors.meta?.subject} />
+                </div>
 
-              <Textarea
-                id="message"
-                className="bg-background mt-2 h-32 resize-none"
-                disabled={isSubmitting}
-                {...register('meta.message')}
-              />
+                <div>
+                  <Label htmlFor="message">
+                    <Trans>
+                      Message <span className="text-muted-foreground">(Optional)</span>
+                    </Trans>
+                  </Label>
 
-              <FormErrorMessage
-                className="mt-2"
-                error={typeof errors.meta?.message !== 'string' ? errors.meta?.message : undefined}
-              />
-            </div>
+                  <Textarea
+                    id="message"
+                    className="bg-background mt-2 h-32 resize-none"
+                    disabled={isSubmitting}
+                    {...register('meta.message')}
+                  />
 
-            <div>
-              <p className="text-muted-foreground text-sm">
-                You can use the following variables in your message:
-              </p>
+                  <FormErrorMessage
+                    className="mt-2"
+                    error={
+                      typeof errors.meta?.message !== 'string' ? errors.meta?.message : undefined
+                    }
+                  />
+                </div>
 
-              <ul className="mt-2 flex list-inside list-disc flex-col gap-y-2 text-sm">
-                <li className="text-muted-foreground">
-                  <code className="text-muted-foreground bg-muted-foreground/20 rounded p-1 text-sm">
-                    {'{signer.name}'}
-                  </code>{' '}
-                  - The signer's name
-                </li>
-                <li className="text-muted-foreground">
-                  <code className="text-muted-foreground bg-muted-foreground/20 rounded p-1 text-sm">
-                    {'{signer.email}'}
-                  </code>{' '}
-                  - The signer's email
-                </li>
-                <li className="text-muted-foreground">
-                  <code className="text-muted-foreground bg-muted-foreground/20 rounded p-1 text-sm">
-                    {'{document.name}'}
-                  </code>{' '}
-                  - The document's name
-                </li>
-              </ul>
-            </div>
+                <DocumentSendEmailMessageHelper />
 
-            <Accordion type="multiple" className="mt-8 border-none">
-              <AccordionItem value="advanced-options" className="border-none">
-                <AccordionTrigger className="mb-2 border-b text-left hover:no-underline">
-                  Advanced Options
-                </AccordionTrigger>
+                <DocumentEmailCheckboxes
+                  className="mt-2"
+                  value={emailSettings}
+                  onChange={(value) => setValue('meta.emailSettings', value)}
+                />
+              </motion.div>
+            )}
 
-                <AccordionContent className="text-muted-foreground -mx-1 flex max-w-prose flex-col px-1 pt-2 text-sm leading-relaxed">
-                  {hasDateField && (
-                    <>
-                      <div className="flex flex-col">
-                        <Label htmlFor="date-format">
-                          Date Format <span className="text-muted-foreground">(Optional)</span>
-                        </Label>
+            {distributionMethod === DocumentDistributionMethod.NONE && (
+              <motion.div
+                key={'Links'}
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0, transition: { duration: 0.3 } }}
+                exit={{ opacity: 0, transition: { duration: 0.15 } }}
+                className="rounded-lg border"
+              >
+                {document.status === DocumentStatus.DRAFT ? (
+                  <div className="text-muted-foreground py-16 text-center text-sm">
+                    <p>
+                      <Trans>We won't send anything to notify recipients.</Trans>
+                    </p>
 
-                        <Controller
-                          control={control}
-                          name={`meta.dateFormat`}
-                          disabled={documentHasBeenSent}
-                          render={({ field: { value, onChange, disabled } }) => (
-                            <Select value={value} onValueChange={onChange} disabled={disabled}>
-                              <SelectTrigger className="bg-background mt-2">
-                                <SelectValue />
-                              </SelectTrigger>
-
-                              <SelectContent>
-                                {DATE_FORMATS.map((format) => (
-                                  <SelectItem key={format.key} value={format.value}>
-                                    {format.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          )}
-                        />
-                      </div>
-
-                      <div className="mt-4 flex flex-col">
-                        <Label htmlFor="time-zone">
-                          Time Zone <span className="text-muted-foreground">(Optional)</span>
-                        </Label>
-
-                        <Controller
-                          control={control}
-                          name={`meta.timezone`}
-                          render={({ field: { value, onChange } }) => (
-                            <Combobox
-                              className="bg-background"
-                              options={TIME_ZONES}
-                              value={value}
-                              onChange={(value) => value && onChange(value)}
-                              disabled={documentHasBeenSent}
-                            />
-                          )}
-                        />
-                      </div>
-                    </>
-                  )}
-
-                  <div className="mt-2 flex flex-col">
-                    <div className="flex flex-col gap-y-4">
-                      <div>
-                        <Label htmlFor="redirectUrl" className="flex items-center">
-                          Redirect URL{' '}
-                          <Tooltip>
-                            <TooltipTrigger>
-                              <Info className="mx-2 h-4 w-4" />
-                            </TooltipTrigger>
-
-                            <TooltipContent className="text-muted-foreground max-w-xs">
-                              Add a URL to redirect the user to once the document is signed
-                            </TooltipContent>
-                          </Tooltip>
-                        </Label>
-
-                        <Input
-                          id="redirectUrl"
-                          type="url"
-                          className="bg-background my-2"
-                          {...register('meta.redirectUrl')}
-                        />
-
-                        <FormErrorMessage className="mt-2" error={errors.meta?.redirectUrl} />
-                      </div>
-                    </div>
+                    <p className="mt-2">
+                      <Trans>
+                        We will generate signing links for with you, which you can send to the
+                        recipients through your method of choice.
+                      </Trans>
+                    </p>
                   </div>
-                </AccordionContent>
-              </AccordionItem>
-            </Accordion>
-          </div>
+                ) : (
+                  <ul className="text-muted-foreground divide-y">
+                    {recipients.length === 0 && (
+                      <li className="flex flex-col items-center justify-center py-6 text-sm">
+                        <Trans>No recipients</Trans>
+                      </li>
+                    )}
+
+                    {recipients.map((recipient) => (
+                      <li
+                        key={recipient.id}
+                        className="flex items-center justify-between px-4 py-3 text-sm"
+                      >
+                        <AvatarWithText
+                          avatarFallback={recipient.email.slice(0, 1).toUpperCase()}
+                          primaryText={
+                            <p className="text-muted-foreground text-sm">{recipient.email}</p>
+                          }
+                          secondaryText={
+                            <p className="text-muted-foreground/70 text-xs">
+                              {_(RECIPIENT_ROLES_DESCRIPTION[recipient.role].roleName)}
+                            </p>
+                          }
+                        />
+
+                        {recipient.role !== RecipientRole.CC && (
+                          <CopyTextButton
+                            value={formatSigningLink(recipient.token)}
+                            onCopySuccess={() => {
+                              toast({
+                                title: _(msg`Copied to clipboard`),
+                                description: _(
+                                  msg`The signing link has been copied to your clipboard.`,
+                                ),
+                              });
+                            }}
+                            badgeContentUncopied={
+                              <p className="ml-1 text-xs">
+                                <Trans>Copy</Trans>
+                              </p>
+                            }
+                            badgeContentCopied={
+                              <p className="ml-1 text-xs">
+                                <Trans>Copied</Trans>
+                              </p>
+                            }
+                          />
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </DocumentFlowFormContainerContent>
 
       <DocumentFlowFormContainerFooter>
-        <DocumentFlowFormContainerStep
-          title={documentFlow.title}
-          step={currentStep}
-          maxStep={totalSteps}
-        />
+        <DocumentFlowFormContainerStep step={currentStep} maxStep={totalSteps} />
 
         <DocumentFlowFormContainerActions
           loading={isSubmitting}
           disabled={isSubmitting}
-          goNextLabel={document.status === DocumentStatus.DRAFT ? 'Send' : 'Update'}
+          goNextLabel={GoNextLabel[distributionMethod][document.status]}
           onGoBackClick={previousStep}
           onGoNextClick={() => void onFormSubmit()}
         />

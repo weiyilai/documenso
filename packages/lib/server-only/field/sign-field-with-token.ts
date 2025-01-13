@@ -3,44 +3,73 @@
 import { DateTime } from 'luxon';
 import { match } from 'ts-pattern';
 
+import { validateCheckboxField } from '@documenso/lib/advanced-fields-validation/validate-checkbox';
+import { validateDropdownField } from '@documenso/lib/advanced-fields-validation/validate-dropdown';
+import { validateNumberField } from '@documenso/lib/advanced-fields-validation/validate-number';
+import { validateRadioField } from '@documenso/lib/advanced-fields-validation/validate-radio';
+import { validateTextField } from '@documenso/lib/advanced-fields-validation/validate-text';
+import { fromCheckboxValue } from '@documenso/lib/universal/field-checkbox';
 import { prisma } from '@documenso/prisma';
 import { DocumentStatus, FieldType, SigningStatus } from '@documenso/prisma/client';
 
 import { DEFAULT_DOCUMENT_DATE_FORMAT } from '../../constants/date-formats';
 import { DEFAULT_DOCUMENT_TIME_ZONE } from '../../constants/time-zones';
 import { DOCUMENT_AUDIT_LOG_TYPE } from '../../types/document-audit-logs';
+import type { TRecipientActionAuth } from '../../types/document-auth';
+import {
+  ZCheckboxFieldMeta,
+  ZDropdownFieldMeta,
+  ZNumberFieldMeta,
+  ZRadioFieldMeta,
+  ZTextFieldMeta,
+} from '../../types/field-meta';
 import type { RequestMetadata } from '../../universal/extract-request-metadata';
 import { createDocumentAuditLogData } from '../../utils/document-audit-logs';
+import { validateFieldAuth } from '../document/validate-field-auth';
 
 export type SignFieldWithTokenOptions = {
   token: string;
   fieldId: number;
   value: string;
   isBase64?: boolean;
+  userId?: number;
+  authOptions?: TRecipientActionAuth;
   requestMetadata?: RequestMetadata;
 };
 
+/**
+ * Please read.
+ *
+ * Content within this function has been duplicated in the
+ * createDocumentFromDirectTemplate file.
+ *
+ * Any update to this should be reflected in the other file if required.
+ *
+ * Todo: Extract common logic.
+ */
 export const signFieldWithToken = async ({
   token,
   fieldId,
   value,
   isBase64,
+  userId,
+  authOptions,
   requestMetadata,
 }: SignFieldWithTokenOptions) => {
   const field = await prisma.field.findFirstOrThrow({
     where: {
       id: fieldId,
-      Recipient: {
+      recipient: {
         token,
       },
     },
     include: {
-      Document: true,
-      Recipient: true,
+      document: true,
+      recipient: true,
     },
   });
 
-  const { Document: document, Recipient: recipient } = field;
+  const { document, recipient } = field;
 
   if (!document) {
     throw new Error(`Document not found for field ${field.id}`);
@@ -50,12 +79,12 @@ export const signFieldWithToken = async ({
     throw new Error(`Recipient not found for field ${field.id}`);
   }
 
-  if (document.status === DocumentStatus.COMPLETED) {
-    throw new Error(`Document ${document.id} has already been completed`);
-  }
-
   if (document.deletedAt) {
     throw new Error(`Document ${document.id} has been deleted`);
+  }
+
+  if (document.status !== DocumentStatus.PENDING) {
+    throw new Error(`Document ${document.id} must be pending for signing`);
   }
 
   if (recipient?.signingStatus === SigningStatus.SIGNED) {
@@ -70,6 +99,61 @@ export const signFieldWithToken = async ({
   if (field.recipientId === null) {
     throw new Error(`Field ${fieldId} has no recipientId`);
   }
+
+  if (field.type === FieldType.NUMBER && field.fieldMeta) {
+    const numberFieldParsedMeta = ZNumberFieldMeta.parse(field.fieldMeta);
+    const errors = validateNumberField(value, numberFieldParsedMeta, true);
+
+    if (errors.length > 0) {
+      throw new Error(errors.join(', '));
+    }
+  }
+
+  if (field.type === FieldType.TEXT && field.fieldMeta) {
+    const textFieldParsedMeta = ZTextFieldMeta.parse(field.fieldMeta);
+    const errors = validateTextField(value, textFieldParsedMeta, true);
+
+    if (errors.length > 0) {
+      throw new Error(errors.join(', '));
+    }
+  }
+
+  if (field.type === FieldType.CHECKBOX && field.fieldMeta) {
+    const checkboxFieldParsedMeta = ZCheckboxFieldMeta.parse(field.fieldMeta);
+    const checkboxFieldValues: string[] = fromCheckboxValue(value);
+
+    const errors = validateCheckboxField(checkboxFieldValues, checkboxFieldParsedMeta, true);
+
+    if (errors.length > 0) {
+      throw new Error(errors.join(', '));
+    }
+  }
+
+  if (field.type === FieldType.RADIO && field.fieldMeta) {
+    const radioFieldParsedMeta = ZRadioFieldMeta.parse(field.fieldMeta);
+    const errors = validateRadioField(value, radioFieldParsedMeta, true);
+
+    if (errors.length > 0) {
+      throw new Error(errors.join(', '));
+    }
+  }
+
+  if (field.type === FieldType.DROPDOWN && field.fieldMeta) {
+    const dropdownFieldParsedMeta = ZDropdownFieldMeta.parse(field.fieldMeta);
+    const errors = validateDropdownField(value, dropdownFieldParsedMeta, true);
+
+    if (errors.length > 0) {
+      throw new Error(errors.join(', '));
+    }
+  }
+
+  const derivedRecipientActionAuth = await validateFieldAuth({
+    documentAuthOptions: document.authOptions,
+    recipient,
+    field,
+    userId,
+    authOptions,
+  });
 
   const documentMeta = await prisma.documentMeta.findFirst({
     where: {
@@ -95,6 +179,10 @@ export const signFieldWithToken = async ({
     throw new Error('Signature field must have a signature');
   }
 
+  if (isSignatureField && !documentMeta?.typedSignatureEnabled && typedSignature) {
+    throw new Error('Typed signatures are not allowed. Please draw your signature');
+  }
+
   return await prisma.$transaction(async (tx) => {
     const updatedField = await tx.field.update({
       where: {
@@ -107,10 +195,6 @@ export const signFieldWithToken = async ({
     });
 
     if (isSignatureField) {
-      if (!field.recipientId) {
-        throw new Error('Field has no recipientId');
-      }
-
       const signature = await tx.signature.upsert({
         where: {
           fieldId: field.id,
@@ -129,7 +213,7 @@ export const signFieldWithToken = async ({
 
       // Dirty but I don't want to deal with type information
       Object.assign(updatedField, {
-        Signature: signature,
+        signature,
       });
     }
 
@@ -153,14 +237,33 @@ export const signFieldWithToken = async ({
               type,
               data: signatureImageAsBase64 || typedSignature || '',
             }))
-            .with(FieldType.DATE, FieldType.EMAIL, FieldType.NAME, FieldType.TEXT, (type) => ({
-              type,
-              data: updatedField.customText,
-            }))
+            .with(
+              FieldType.DATE,
+              FieldType.EMAIL,
+              FieldType.NAME,
+              FieldType.TEXT,
+              FieldType.INITIALS,
+              (type) => ({
+                type,
+                data: updatedField.customText,
+              }),
+            )
+            .with(
+              FieldType.NUMBER,
+              FieldType.RADIO,
+              FieldType.CHECKBOX,
+              FieldType.DROPDOWN,
+              (type) => ({
+                type,
+                data: updatedField.customText,
+              }),
+            )
             .exhaustive(),
-          fieldSecurity: {
-            type: 'NONE',
-          },
+          fieldSecurity: derivedRecipientActionAuth
+            ? {
+                type: derivedRecipientActionAuth,
+              }
+            : undefined,
         },
       }),
     });

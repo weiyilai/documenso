@@ -2,17 +2,20 @@
 
 import { useMemo, useState } from 'react';
 
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
+import { Trans, msg } from '@lingui/macro';
+import { useLingui } from '@lingui/react';
 import { Loader } from 'lucide-react';
 import { useSession } from 'next-auth/react';
 
 import { useLimits } from '@documenso/ee/server-only/limits/provider/client';
 import { useAnalytics } from '@documenso/lib/client-only/hooks/use-analytics';
 import { APP_DOCUMENT_UPLOAD_SIZE_LIMIT } from '@documenso/lib/constants/app';
+import { DEFAULT_DOCUMENT_TIME_ZONE, TIME_ZONES } from '@documenso/lib/constants/time-zones';
+import { AppError } from '@documenso/lib/errors/app-error';
 import { createDocumentData } from '@documenso/lib/server-only/document-data/create-document-data';
-import { putFile } from '@documenso/lib/universal/upload/put-file';
+import { putPdfFile } from '@documenso/lib/universal/upload/put-file';
 import { formatDocumentsPath } from '@documenso/lib/utils/teams';
 import { TRPCClientError } from '@documenso/trpc/client';
 import { trpc } from '@documenso/trpc/react';
@@ -31,12 +34,16 @@ export type UploadDocumentProps = {
 export const UploadDocument = ({ className, team }: UploadDocumentProps) => {
   const router = useRouter();
   const analytics = useAnalytics();
+  const userTimezone =
+    TIME_ZONES.find((timezone) => timezone === Intl.DateTimeFormat().resolvedOptions().timeZone) ??
+    DEFAULT_DOCUMENT_TIME_ZONE;
 
   const { data: session } = useSession();
 
+  const { _ } = useLingui();
   const { toast } = useToast();
 
-  const { quota, remaining } = useLimits();
+  const { quota, remaining, refreshLimits } = useLimits();
 
   const [isLoading, setIsLoading] = useState(false);
 
@@ -45,20 +52,21 @@ export const UploadDocument = ({ className, team }: UploadDocumentProps) => {
   const disabledMessage = useMemo(() => {
     if (remaining.documents === 0) {
       return team
-        ? 'Document upload disabled due to unpaid invoices'
-        : 'You have reached your document limit.';
+        ? msg`Document upload disabled due to unpaid invoices`
+        : msg`You have reached your document limit.`;
     }
 
     if (!session?.user.emailVerified) {
-      return 'Verify your email to upload documents.';
+      return msg`Verify your email to upload documents.`;
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [remaining.documents, session?.user.emailVerified, team]);
 
   const onFileDrop = async (file: File) => {
     try {
       setIsLoading(true);
 
-      const { type, data } = await putFile(file);
+      const { type, data } = await putPdfFile(file);
 
       const { id: documentDataId } = await createDocumentData({
         type,
@@ -68,12 +76,14 @@ export const UploadDocument = ({ className, team }: UploadDocumentProps) => {
       const { id } = await createDocument({
         title: file.name,
         documentDataId,
-        teamId: team?.id,
+        timezone: userTimezone,
       });
 
+      void refreshLimits();
+
       toast({
-        title: 'Document uploaded',
-        description: 'Your document has been uploaded successfully.',
+        title: _(msg`Document uploaded`),
+        description: _(msg`Your document has been uploaded successfully.`),
         duration: 5000,
       });
 
@@ -84,19 +94,27 @@ export const UploadDocument = ({ className, team }: UploadDocumentProps) => {
       });
 
       router.push(`${formatDocumentsPath(team?.url)}/${id}/edit`);
-    } catch (error) {
-      console.error(error);
+    } catch (err) {
+      const error = AppError.parseError(err);
 
-      if (error instanceof TRPCClientError) {
+      console.error(err);
+
+      if (error.code === 'INVALID_DOCUMENT_FILE') {
         toast({
-          title: 'Error',
-          description: error.message,
+          title: _(msg`Invalid file`),
+          description: _(msg`You cannot upload encrypted PDFs`),
+          variant: 'destructive',
+        });
+      } else if (err instanceof TRPCClientError) {
+        toast({
+          title: _(msg`Error`),
+          description: err.message,
           variant: 'destructive',
         });
       } else {
         toast({
-          title: 'Error',
-          description: 'An error occurred while uploading your document.',
+          title: _(msg`Error`),
+          description: _(msg`An error occurred while uploading your document.`),
           variant: 'destructive',
         });
       }
@@ -107,8 +125,8 @@ export const UploadDocument = ({ className, team }: UploadDocumentProps) => {
 
   const onFileDropRejected = () => {
     toast({
-      title: 'Your document failed to upload.',
-      description: `File cannot be larger than ${APP_DOCUMENT_UPLOAD_SIZE_LIMIT}MB`,
+      title: _(msg`Your document failed to upload.`),
+      description: _(msg`File cannot be larger than ${APP_DOCUMENT_UPLOAD_SIZE_LIMIT}MB`),
       duration: 5000,
       variant: 'destructive',
     });
@@ -129,7 +147,9 @@ export const UploadDocument = ({ className, team }: UploadDocumentProps) => {
           remaining.documents > 0 &&
           Number.isFinite(remaining.documents) && (
             <p className="text-muted-foreground/60 text-xs">
-              {remaining.documents} of {quota.documents} documents remaining this month.
+              <Trans>
+                {remaining.documents} of {quota.documents} documents remaining this month.
+              </Trans>
             </p>
           )}
       </div>
@@ -137,27 +157,6 @@ export const UploadDocument = ({ className, team }: UploadDocumentProps) => {
       {isLoading && (
         <div className="bg-background/50 absolute inset-0 flex items-center justify-center rounded-lg">
           <Loader className="text-muted-foreground h-12 w-12 animate-spin" />
-        </div>
-      )}
-
-      {team?.id === undefined && remaining.documents === 0 && (
-        <div className="bg-background/60 absolute inset-0 flex items-center justify-center rounded-lg backdrop-blur-sm">
-          <div className="text-center">
-            <h2 className="text-muted-foreground/80 text-xl font-semibold">
-              You have reached your document limit.
-            </h2>
-
-            <p className="text-muted-foreground/60 mt-2 text-sm">
-              You can upload up to {quota.documents} documents per month on your current plan.
-            </p>
-
-            <Link
-              className="text-primary hover:text-primary/80 mt-6 block font-medium"
-              href="/settings/billing"
-            >
-              Upgrade your account to upload more documents.
-            </Link>
-          </div>
         </div>
       )}
     </div>

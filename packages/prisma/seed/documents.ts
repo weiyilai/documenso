@@ -1,4 +1,4 @@
-import type { User } from '@prisma/client';
+import type { Document, User } from '@prisma/client';
 import { nanoid } from 'nanoid';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,6 +7,7 @@ import { match } from 'ts-pattern';
 import { prisma } from '..';
 import {
   DocumentDataType,
+  DocumentSource,
   DocumentStatus,
   FieldType,
   Prisma,
@@ -33,19 +34,19 @@ export const seedDocuments = async (documents: DocumentToSeed[]) => {
     documents.map(async (document, i) =>
       match(document.type)
         .with(DocumentStatus.DRAFT, async () =>
-          createDraftDocument(document.sender, document.recipients, {
+          seedDraftDocument(document.sender, document.recipients, {
             key: i,
             createDocumentOptions: document.documentOptions,
           }),
         )
         .with(DocumentStatus.PENDING, async () =>
-          createPendingDocument(document.sender, document.recipients, {
+          seedPendingDocument(document.sender, document.recipients, {
             key: i,
             createDocumentOptions: document.documentOptions,
           }),
         )
         .with(DocumentStatus.COMPLETED, async () =>
-          createCompletedDocument(document.sender, document.recipients, {
+          seedCompletedDocument(document.sender, document.recipients, {
             key: i,
             createDocumentOptions: document.documentOptions,
           }),
@@ -55,7 +56,38 @@ export const seedDocuments = async (documents: DocumentToSeed[]) => {
   );
 };
 
-const createDraftDocument = async (
+export const seedBlankDocument = async (owner: User, options: CreateDocumentOptions = {}) => {
+  const { key, createDocumentOptions = {} } = options;
+
+  const documentData = await prisma.documentData.create({
+    data: {
+      type: DocumentDataType.BYTES_64,
+      data: examplePdf,
+      initialData: examplePdf,
+    },
+  });
+
+  return await prisma.document.create({
+    data: {
+      source: DocumentSource.DOCUMENT,
+      title: `[TEST] Document ${key} - Draft`,
+      status: DocumentStatus.DRAFT,
+      documentDataId: documentData.id,
+      userId: owner.id,
+      ...createDocumentOptions,
+    },
+  });
+};
+
+export const unseedDocument = async (documentId: number) => {
+  await prisma.document.delete({
+    where: {
+      id: documentId,
+    },
+  });
+};
+
+export const seedDraftDocument = async (
   sender: User,
   recipients: (User | string)[],
   options: CreateDocumentOptions = {},
@@ -72,6 +104,7 @@ const createDraftDocument = async (
 
   const document = await prisma.document.create({
     data: {
+      source: DocumentSource.DOCUMENT,
       title: `[TEST] Document ${key} - Draft`,
       status: DocumentStatus.DRAFT,
       documentDataId: documentData.id,
@@ -82,7 +115,7 @@ const createDraftDocument = async (
 
   for (const recipient of recipients) {
     const email = typeof recipient === 'string' ? recipient : recipient.email;
-    const name = typeof recipient === 'string' ? recipient : recipient.name ?? '';
+    const name = typeof recipient === 'string' ? recipient : (recipient.name ?? '');
 
     await prisma.recipient.create({
       data: {
@@ -93,12 +126,12 @@ const createDraftDocument = async (
         sendStatus: SendStatus.NOT_SENT,
         signingStatus: SigningStatus.NOT_SIGNED,
         signedAt: new Date(),
-        Document: {
+        document: {
           connect: {
             id: document.id,
           },
         },
-        Field: {
+        fields: {
           create: {
             page: 1,
             type: FieldType.NAME,
@@ -114,6 +147,8 @@ const createDraftDocument = async (
       },
     });
   }
+
+  return document;
 };
 
 type CreateDocumentOptions = {
@@ -121,7 +156,7 @@ type CreateDocumentOptions = {
   createDocumentOptions?: Partial<Prisma.DocumentUncheckedCreateInput>;
 };
 
-const createPendingDocument = async (
+export const seedPendingDocument = async (
   sender: User,
   recipients: (User | string)[],
   options: CreateDocumentOptions = {},
@@ -138,6 +173,7 @@ const createPendingDocument = async (
 
   const document = await prisma.document.create({
     data: {
+      source: DocumentSource.DOCUMENT,
       title: `[TEST] Document ${key} - Pending`,
       status: DocumentStatus.PENDING,
       documentDataId: documentData.id,
@@ -148,7 +184,7 @@ const createPendingDocument = async (
 
   for (const recipient of recipients) {
     const email = typeof recipient === 'string' ? recipient : recipient.email;
-    const name = typeof recipient === 'string' ? recipient : recipient.name ?? '';
+    const name = typeof recipient === 'string' ? recipient : (recipient.name ?? '');
 
     await prisma.recipient.create({
       data: {
@@ -159,12 +195,12 @@ const createPendingDocument = async (
         sendStatus: SendStatus.SENT,
         signingStatus: SigningStatus.NOT_SIGNED,
         signedAt: new Date(),
-        Document: {
+        document: {
           connect: {
             id: document.id,
           },
         },
-        Field: {
+        fields: {
           create: {
             page: 1,
             type: FieldType.NAME,
@@ -180,9 +216,156 @@ const createPendingDocument = async (
       },
     });
   }
+
+  return prisma.document.findFirstOrThrow({
+    where: {
+      id: document.id,
+    },
+    include: {
+      recipients: true,
+    },
+  });
 };
 
-const createCompletedDocument = async (
+export const seedPendingDocumentNoFields = async ({
+  owner,
+  recipients,
+  updateDocumentOptions,
+}: {
+  owner: User;
+  recipients: (User | string)[];
+  updateDocumentOptions?: Partial<Prisma.DocumentUncheckedUpdateInput>;
+}) => {
+  const document: Document = await seedBlankDocument(owner);
+
+  for (const recipient of recipients) {
+    const email = typeof recipient === 'string' ? recipient : recipient.email;
+    const name = typeof recipient === 'string' ? recipient : (recipient.name ?? '');
+
+    await prisma.recipient.create({
+      data: {
+        email,
+        name,
+        token: nanoid(),
+        readStatus: ReadStatus.OPENED,
+        sendStatus: SendStatus.SENT,
+        signingStatus: SigningStatus.NOT_SIGNED,
+        signedAt: new Date(),
+        document: {
+          connect: {
+            id: document.id,
+          },
+        },
+      },
+    });
+  }
+
+  const createdRecipients = await prisma.recipient.findMany({
+    where: {
+      documentId: document.id,
+    },
+    include: {
+      fields: true,
+    },
+  });
+
+  const latestDocument = updateDocumentOptions
+    ? await prisma.document.update({
+        where: {
+          id: document.id,
+        },
+        data: updateDocumentOptions,
+      })
+    : document;
+
+  return {
+    document: latestDocument,
+    recipients: createdRecipients,
+  };
+};
+
+export const seedPendingDocumentWithFullFields = async ({
+  owner,
+  recipients,
+  recipientsCreateOptions,
+  updateDocumentOptions,
+  fields = [FieldType.DATE, FieldType.EMAIL, FieldType.NAME, FieldType.SIGNATURE, FieldType.TEXT],
+}: {
+  owner: User;
+  recipients: (User | string)[];
+  recipientsCreateOptions?: Partial<Prisma.RecipientCreateInput>[];
+  updateDocumentOptions?: Partial<Prisma.DocumentUncheckedUpdateInput>;
+  fields?: FieldType[];
+}) => {
+  const document: Document = await seedBlankDocument(owner);
+
+  for (const [recipientIndex, recipient] of recipients.entries()) {
+    const email = typeof recipient === 'string' ? recipient : recipient.email;
+    const name = typeof recipient === 'string' ? recipient : (recipient.name ?? '');
+
+    await prisma.recipient.create({
+      data: {
+        email,
+        name,
+        token: nanoid(),
+        readStatus: ReadStatus.OPENED,
+        sendStatus: SendStatus.SENT,
+        signingStatus: SigningStatus.NOT_SIGNED,
+        signedAt: new Date(),
+        document: {
+          connect: {
+            id: document.id,
+          },
+        },
+        fields: {
+          createMany: {
+            data: fields.map((fieldType, fieldIndex) => ({
+              page: 1,
+              type: fieldType,
+              inserted: false,
+              customText: name,
+              positionX: new Prisma.Decimal((recipientIndex + 1) * 5),
+              positionY: new Prisma.Decimal((fieldIndex + 1) * 5),
+              width: new Prisma.Decimal(5),
+              height: new Prisma.Decimal(5),
+              documentId: document.id,
+            })),
+          },
+        },
+        ...(recipientsCreateOptions?.[recipientIndex] ?? {}),
+      },
+    });
+  }
+
+  const createdRecipients = await prisma.recipient.findMany({
+    where: {
+      documentId: document.id,
+    },
+    include: {
+      fields: true,
+    },
+  });
+
+  const latestDocument = await prisma.document.update({
+    where: {
+      id: document.id,
+    },
+    data: {
+      ...updateDocumentOptions,
+      status: DocumentStatus.PENDING,
+    },
+    include: {
+      documentMeta: true,
+    },
+  });
+
+  return {
+    document: latestDocument,
+    recipients: createdRecipients,
+  };
+};
+
+export const seedCompletedDocument = async (
   sender: User,
   recipients: (User | string)[],
   options: CreateDocumentOptions = {},
@@ -199,6 +382,7 @@ const createCompletedDocument = async (
 
   const document = await prisma.document.create({
     data: {
+      source: DocumentSource.DOCUMENT,
       title: `[TEST] Document ${key} - Completed`,
       status: DocumentStatus.COMPLETED,
       documentDataId: documentData.id,
@@ -209,7 +393,7 @@ const createCompletedDocument = async (
 
   for (const recipient of recipients) {
     const email = typeof recipient === 'string' ? recipient : recipient.email;
-    const name = typeof recipient === 'string' ? recipient : recipient.name ?? '';
+    const name = typeof recipient === 'string' ? recipient : (recipient.name ?? '');
 
     await prisma.recipient.create({
       data: {
@@ -220,12 +404,12 @@ const createCompletedDocument = async (
         sendStatus: SendStatus.SENT,
         signingStatus: SigningStatus.SIGNED,
         signedAt: new Date(),
-        Document: {
+        document: {
           connect: {
             id: document.id,
           },
         },
-        Field: {
+        fields: {
           create: {
             page: 1,
             type: FieldType.NAME,
@@ -241,6 +425,8 @@ const createCompletedDocument = async (
       },
     });
   }
+
+  return document;
 };
 
 /**

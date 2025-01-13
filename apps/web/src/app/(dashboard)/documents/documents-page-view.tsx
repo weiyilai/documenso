@@ -1,5 +1,8 @@
 import Link from 'next/link';
 
+import { Trans } from '@lingui/macro';
+
+import { NEXT_PUBLIC_WEBAPP_URL } from '@documenso/lib/constants/app';
 import { getRequiredServerComponentSession } from '@documenso/lib/next-auth/get-server-component-session';
 import { findDocuments } from '@documenso/lib/server-only/document/find-documents';
 import type { PeriodSelectorValue } from '@documenso/lib/server-only/document/find-documents';
@@ -7,12 +10,13 @@ import type { GetStatsInput } from '@documenso/lib/server-only/document/get-stat
 import { getStats } from '@documenso/lib/server-only/document/get-stats';
 import { parseToIntegerArray } from '@documenso/lib/utils/params';
 import { formatDocumentsPath } from '@documenso/lib/utils/teams';
-import type { Team, TeamEmail } from '@documenso/prisma/client';
+import type { Team, TeamEmail, TeamMemberRole } from '@documenso/prisma/client';
 import { isExtendedDocumentStatus } from '@documenso/prisma/guards/is-extended-document-status';
 import { ExtendedDocumentStatus } from '@documenso/prisma/types/extended-document-status';
-import { Avatar, AvatarFallback } from '@documenso/ui/primitives/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@documenso/ui/primitives/avatar';
 import { Tabs, TabsList, TabsTrigger } from '@documenso/ui/primitives/tabs';
 
+import { DocumentSearch } from '~/components/(dashboard)/document-search/document-search';
 import { PeriodSelector } from '~/components/(dashboard)/period-selector/period-selector';
 import { isPeriodSelectorValue } from '~/components/(dashboard)/period-selector/types';
 import { DocumentStatus } from '~/components/formatter/document-status';
@@ -22,16 +26,17 @@ import { DataTableSenderFilter } from './data-table-sender-filter';
 import { EmptyDocumentState } from './empty-state';
 import { UploadDocument } from './upload-document';
 
-export type DocumentsPageViewProps = {
+export interface DocumentsPageViewProps {
   searchParams?: {
     status?: ExtendedDocumentStatus;
     period?: PeriodSelectorValue;
     page?: string;
     perPage?: string;
     senderIds?: string;
+    search?: string;
   };
-  team?: Team & { teamEmail?: TeamEmail | null };
-};
+  team?: Team & { teamEmail?: TeamEmail | null } & { currentTeamMember?: { role: TeamMemberRole } };
+}
 
 export const DocumentsPageView = async ({ searchParams = {}, team }: DocumentsPageViewProps) => {
   const { user } = await getRequiredServerComponentSession();
@@ -41,11 +46,16 @@ export const DocumentsPageView = async ({ searchParams = {}, team }: DocumentsPa
   const page = Number(searchParams.page) || 1;
   const perPage = Number(searchParams.perPage) || 20;
   const senderIds = parseToIntegerArray(searchParams.senderIds ?? '');
-  const currentTeam = team ? { id: team.id, url: team.url } : undefined;
+  const search = searchParams.search || '';
+  const currentTeam = team
+    ? { id: team.id, url: team.url, teamEmail: team.teamEmail?.email }
+    : undefined;
+  const currentTeamMemberRole = team?.currentTeamMember?.role;
 
   const getStatOptions: GetStatsInput = {
     user,
     period,
+    search,
   };
 
   if (team) {
@@ -53,6 +63,9 @@ export const DocumentsPageView = async ({ searchParams = {}, team }: DocumentsPa
       teamId: team.id,
       teamEmail: team.teamEmail?.email,
       senderIds,
+      currentTeamMemberRole,
+      currentUserEmail: user.email,
+      userId: user.id,
     };
   }
 
@@ -70,6 +83,7 @@ export const DocumentsPageView = async ({ searchParams = {}, team }: DocumentsPa
     perPage,
     period,
     senderIds,
+    query: search,
   });
 
   const getTabHref = (value: typeof status) => {
@@ -92,13 +106,18 @@ export const DocumentsPageView = async ({ searchParams = {}, team }: DocumentsPa
         <div className="flex flex-row items-center">
           {team && (
             <Avatar className="dark:border-border mr-3 h-12 w-12 border-2 border-solid border-white">
+              {team.avatarImageId && (
+                <AvatarImage src={`${NEXT_PUBLIC_WEBAPP_URL()}/api/avatar/${team.avatarImageId}`} />
+              )}
               <AvatarFallback className="text-xs text-gray-400">
                 {team.name.slice(0, 1)}
               </AvatarFallback>
             </Avatar>
           )}
 
-          <h1 className="text-4xl font-semibold">Documents</h1>
+          <h1 className="text-4xl font-semibold">
+            <Trans>Documents</Trans>
+          </h1>
         </div>
 
         <div className="-m-1 flex flex-wrap gap-x-4 gap-y-6 overflow-hidden p-1">
@@ -121,10 +140,7 @@ export const DocumentsPageView = async ({ searchParams = {}, team }: DocumentsPa
                     <DocumentStatus status={value} />
 
                     {value !== ExtendedDocumentStatus.ALL && (
-                      <span className="ml-1 inline-block opacity-50">
-                        {Math.min(stats[value], 99)}
-                        {stats[value] > 99 && '+'}
-                      </span>
+                      <span className="ml-1 inline-block opacity-50">{stats[value]}</span>
                     )}
                   </Link>
                 </TabsTrigger>
@@ -136,6 +152,9 @@ export const DocumentsPageView = async ({ searchParams = {}, team }: DocumentsPa
 
           <div className="flex w-48 flex-wrap items-center justify-between gap-x-2 gap-y-4">
             <PeriodSelector />
+          </div>
+          <div className="flex w-48 flex-wrap items-center justify-between gap-x-2 gap-y-4">
+            <DocumentSearch initialValue={search} />
           </div>
         </div>
       </div>

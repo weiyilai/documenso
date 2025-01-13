@@ -1,6 +1,12 @@
+'use client';
+
+import { useState } from 'react';
+
 import { useRouter } from 'next/navigation';
 
 import { zodResolver } from '@hookform/resolvers/zod';
+import { Trans, msg } from '@lingui/macro';
+import { useLingui } from '@lingui/react';
 import { flushSync } from 'react-dom';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -14,6 +20,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
 } from '@documenso/ui/primitives/dialog';
 import {
   Form,
@@ -24,141 +31,168 @@ import {
   FormMessage,
 } from '@documenso/ui/primitives/form/form';
 import { Input } from '@documenso/ui/primitives/input';
-import { PasswordInput } from '@documenso/ui/primitives/password-input';
+import { PinInput, PinInputGroup, PinInputSlot } from '@documenso/ui/primitives/pin-input';
 import { useToast } from '@documenso/ui/primitives/use-toast';
 
-export const ZDisableTwoFactorAuthenticationForm = z.object({
-  password: z.string().min(6).max(72),
-  backupCode: z.string(),
+export const ZDisable2FAForm = z.object({
+  totpCode: z.string().trim().optional(),
+  backupCode: z.string().trim().optional(),
 });
 
-export type TDisableTwoFactorAuthenticationForm = z.infer<
-  typeof ZDisableTwoFactorAuthenticationForm
->;
+export type TDisable2FAForm = z.infer<typeof ZDisable2FAForm>;
 
-export type DisableAuthenticatorAppDialogProps = {
-  open: boolean;
-  onOpenChange: (_open: boolean) => void;
-};
-
-export const DisableAuthenticatorAppDialog = ({
-  open,
-  onOpenChange,
-}: DisableAuthenticatorAppDialogProps) => {
+export const DisableAuthenticatorAppDialog = () => {
   const router = useRouter();
+
+  const { _ } = useLingui();
   const { toast } = useToast();
 
-  const { mutateAsync: disableTwoFactorAuthentication } =
-    trpc.twoFactorAuthentication.disable.useMutation();
+  const [isOpen, setIsOpen] = useState(false);
+  const [twoFactorDisableMethod, setTwoFactorDisableMethod] = useState<'totp' | 'backup'>('totp');
 
-  const disableTwoFactorAuthenticationForm = useForm<TDisableTwoFactorAuthenticationForm>({
+  const { mutateAsync: disable2FA } = trpc.twoFactorAuthentication.disable.useMutation();
+
+  const disable2FAForm = useForm<TDisable2FAForm>({
     defaultValues: {
-      password: '',
+      totpCode: '',
       backupCode: '',
     },
-    resolver: zodResolver(ZDisableTwoFactorAuthenticationForm),
+    resolver: zodResolver(ZDisable2FAForm),
   });
 
-  const { isSubmitting: isDisableTwoFactorAuthenticationSubmitting } =
-    disableTwoFactorAuthenticationForm.formState;
+  const onCloseTwoFactorDisableDialog = () => {
+    disable2FAForm.reset();
 
-  const onDisableTwoFactorAuthenticationFormSubmit = async ({
-    password,
-    backupCode,
-  }: TDisableTwoFactorAuthenticationForm) => {
+    setIsOpen(!isOpen);
+  };
+
+  const onToggleTwoFactorDisableMethodClick = () => {
+    const method = twoFactorDisableMethod === 'totp' ? 'backup' : 'totp';
+
+    if (method === 'totp') {
+      disable2FAForm.setValue('backupCode', '');
+    }
+
+    if (method === 'backup') {
+      disable2FAForm.setValue('totpCode', '');
+    }
+
+    setTwoFactorDisableMethod(method);
+  };
+
+  const { isSubmitting: isDisable2FASubmitting } = disable2FAForm.formState;
+
+  const onDisable2FAFormSubmit = async ({ totpCode, backupCode }: TDisable2FAForm) => {
     try {
-      await disableTwoFactorAuthentication({ password, backupCode });
+      await disable2FA({ totpCode, backupCode });
 
       toast({
-        title: 'Two-factor authentication disabled',
-        description:
-          'Two-factor authentication has been disabled for your account. You will no longer be required to enter a code from your authenticator app when signing in.',
+        title: _(msg`Two-factor authentication disabled`),
+        description: _(
+          msg`Two-factor authentication has been disabled for your account. You will no longer be required to enter a code from your authenticator app when signing in.`,
+        ),
       });
 
       flushSync(() => {
-        onOpenChange(false);
+        onCloseTwoFactorDisableDialog();
       });
 
       router.refresh();
     } catch (_err) {
       toast({
-        title: 'Unable to disable two-factor authentication',
-        description:
-          'We were unable to disable two-factor authentication for your account. Please ensure that you have entered your password and backup code correctly and try again.',
+        title: _(msg`Unable to disable two-factor authentication`),
+        description: _(
+          msg`We were unable to disable two-factor authentication for your account. Please ensure that you have entered your password and backup code correctly and try again.`,
+        ),
         variant: 'destructive',
       });
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-full max-w-xl md:max-w-xl lg:max-w-xl">
+    <Dialog open={isOpen} onOpenChange={onCloseTwoFactorDisableDialog}>
+      <DialogTrigger asChild={true}>
+        <Button className="flex-shrink-0" variant="destructive">
+          <Trans>Disable 2FA</Trans>
+        </Button>
+      </DialogTrigger>
+
+      <DialogContent position="center">
         <DialogHeader>
-          <DialogTitle>Disable Authenticator App</DialogTitle>
+          <DialogTitle>
+            <Trans>Disable 2FA</Trans>
+          </DialogTitle>
 
           <DialogDescription>
-            To disable the Authenticator App for your account, please enter your password and a
-            backup code. If you do not have a backup code available, please contact support.
+            <Trans>
+              Please provide a token from the authenticator, or a backup code. If you do not have a
+              backup code available, please contact support.
+            </Trans>
           </DialogDescription>
         </DialogHeader>
 
-        <Form {...disableTwoFactorAuthenticationForm}>
-          <form
-            onSubmit={disableTwoFactorAuthenticationForm.handleSubmit(
-              onDisableTwoFactorAuthenticationFormSubmit,
-            )}
-            className="flex flex-col gap-y-4"
-          >
-            <fieldset
-              className="flex flex-col gap-y-4"
-              disabled={isDisableTwoFactorAuthenticationSubmitting}
-            >
-              <FormField
-                name="password"
-                control={disableTwoFactorAuthenticationForm.control}
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-muted-foreground">Password</FormLabel>
-                    <FormControl>
-                      <PasswordInput
-                        {...field}
-                        autoComplete="current-password"
-                        value={field.value ?? ''}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+        <Form {...disable2FAForm}>
+          <form onSubmit={disable2FAForm.handleSubmit(onDisable2FAFormSubmit)}>
+            <fieldset className="flex flex-col gap-y-4" disabled={isDisable2FASubmitting}>
+              {twoFactorDisableMethod === 'totp' && (
+                <FormField
+                  name="totpCode"
+                  control={disable2FAForm.control}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormControl>
+                        <PinInput {...field} value={field.value ?? ''} maxLength={6}>
+                          {Array(6)
+                            .fill(null)
+                            .map((_, i) => (
+                              <PinInputGroup key={i}>
+                                <PinInputSlot index={i} />
+                              </PinInputGroup>
+                            ))}
+                        </PinInput>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
 
-              <FormField
-                name="backupCode"
-                control={disableTwoFactorAuthenticationForm.control}
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-muted-foreground">Backup Code</FormLabel>
-                    <FormControl>
-                      <Input {...field} type="text" value={field.value ?? ''} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              {twoFactorDisableMethod === 'backup' && (
+                <FormField
+                  control={disable2FAForm.control}
+                  name="backupCode"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        <Trans>Backup Code</Trans>
+                      </FormLabel>
+                      <FormControl>
+                        <Input type="text" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={onToggleTwoFactorDisableMethodClick}
+                >
+                  {twoFactorDisableMethod === 'totp' ? (
+                    <Trans>Use Backup Code</Trans>
+                  ) : (
+                    <Trans>Use Authenticator</Trans>
+                  )}
+                </Button>
+
+                <Button type="submit" variant="destructive" loading={isDisable2FASubmitting}>
+                  <Trans>Disable 2FA</Trans>
+                </Button>
+              </DialogFooter>
             </fieldset>
-
-            <DialogFooter>
-              <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
-                Cancel
-              </Button>
-
-              <Button
-                type="submit"
-                variant="destructive"
-                loading={isDisableTwoFactorAuthenticationSubmitting}
-              >
-                Disable 2FA
-              </Button>
-            </DialogFooter>
           </form>
         </Form>
       </DialogContent>

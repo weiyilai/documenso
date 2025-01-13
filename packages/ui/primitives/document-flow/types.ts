@@ -1,5 +1,8 @@
+import type { MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/macro';
 import { z } from 'zod';
 
+import { ZFieldMetaSchema } from '@documenso/lib/types/field-meta';
 import { FieldType } from '@documenso/prisma/client';
 
 export const ZDocumentFlowFormSchema = z.object({
@@ -30,6 +33,7 @@ export const ZDocumentFlowFormSchema = z.object({
       pageY: z.number().min(0),
       pageWidth: z.number().min(0),
       pageHeight: z.number().min(0),
+      fieldMeta: ZFieldMetaSchema,
     }),
   ),
 
@@ -41,18 +45,23 @@ export const ZDocumentFlowFormSchema = z.object({
 
 export type TDocumentFlowFormSchema = z.infer<typeof ZDocumentFlowFormSchema>;
 
-export const FRIENDLY_FIELD_TYPE: Record<FieldType, string> = {
-  [FieldType.SIGNATURE]: 'Signature',
-  [FieldType.FREE_SIGNATURE]: 'Free Signature',
-  [FieldType.TEXT]: 'Text',
-  [FieldType.DATE]: 'Date',
-  [FieldType.EMAIL]: 'Email',
-  [FieldType.NAME]: 'Name',
+export const FRIENDLY_FIELD_TYPE: Record<FieldType, MessageDescriptor> = {
+  [FieldType.SIGNATURE]: msg`Signature`,
+  [FieldType.FREE_SIGNATURE]: msg`Free Signature`,
+  [FieldType.INITIALS]: msg`Initials`,
+  [FieldType.TEXT]: msg`Text`,
+  [FieldType.DATE]: msg`Date`,
+  [FieldType.EMAIL]: msg`Email`,
+  [FieldType.NAME]: msg`Name`,
+  [FieldType.NUMBER]: msg`Number`,
+  [FieldType.RADIO]: msg`Radio`,
+  [FieldType.CHECKBOX]: msg`Checkbox`,
+  [FieldType.DROPDOWN]: msg`Select`,
 };
 
 export interface DocumentFlowStep {
-  title: string;
-  description: string;
+  title: MessageDescriptor;
+  description: MessageDescriptor;
   stepIndex?: number;
   onBackStep?: () => unknown;
   onNextStep?: () => unknown;

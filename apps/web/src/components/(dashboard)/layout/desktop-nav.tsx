@@ -1,37 +1,38 @@
-'use client';
-
 import type { HTMLAttributes } from 'react';
 import { useEffect, useState } from 'react';
 
 import Link from 'next/link';
 import { useParams, usePathname } from 'next/navigation';
 
+import { Trans, msg } from '@lingui/macro';
+import { useLingui } from '@lingui/react';
 import { Search } from 'lucide-react';
 
 import { getRootHref } from '@documenso/lib/utils/params';
 import { cn } from '@documenso/ui/lib/utils';
 import { Button } from '@documenso/ui/primitives/button';
 
-import { CommandMenu } from '../common/command-menu';
-
 const navigationLinks = [
   {
     href: '/documents',
-    label: 'Documents',
+    label: msg`Documents`,
   },
   {
     href: '/templates',
-    label: 'Templates',
+    label: msg`Templates`,
   },
 ];
 
-export type DesktopNavProps = HTMLAttributes<HTMLDivElement>;
+export type DesktopNavProps = HTMLAttributes<HTMLDivElement> & {
+  setIsCommandMenuOpen: (value: boolean) => void;
+};
 
-export const DesktopNav = ({ className, ...props }: DesktopNavProps) => {
+export const DesktopNav = ({ className, setIsCommandMenuOpen, ...props }: DesktopNavProps) => {
+  const { _ } = useLingui();
+
   const pathname = usePathname();
   const params = useParams();
 
-  const [open, setOpen] = useState(false);
   const [modifierKey, setModifierKey] = useState(() => 'Ctrl');
 
   const rootHref = getRootHref(params, { returnEmptyRootString: true });
@@ -65,21 +66,19 @@ export const DesktopNav = ({ className, ...props }: DesktopNavProps) => {
               },
             )}
           >
-            {label}
+            {_(label)}
           </Link>
         ))}
       </div>
 
-      <CommandMenu open={open} onOpenChange={setOpen} />
-
       <Button
         variant="outline"
         className="text-muted-foreground flex w-96 items-center justify-between rounded-lg"
-        onClick={() => setOpen((open) => !open)}
+        onClick={() => setIsCommandMenuOpen(true)}
       >
         <div className="flex items-center">
           <Search className="mr-2 h-5 w-5" />
-          Search
+          <Trans>Search</Trans>
         </div>
 
         <div>

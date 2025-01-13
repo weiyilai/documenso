@@ -1,21 +1,32 @@
-'use server';
-
 import { nanoid } from 'nanoid';
 import path from 'node:path';
-import { PDFDocument, PDFSignature, rectangle } from 'pdf-lib';
+import { PDFDocument } from 'pdf-lib';
 
 import PostHogServerClient from '@documenso/lib/server-only/feature-flags/get-post-hog-server-client';
 import { DOCUMENT_AUDIT_LOG_TYPE } from '@documenso/lib/types/document-audit-logs';
 import { createDocumentAuditLogData } from '@documenso/lib/utils/document-audit-logs';
 import { prisma } from '@documenso/prisma';
-import { DocumentStatus, RecipientRole, SigningStatus } from '@documenso/prisma/client';
-import { WebhookTriggerEvents } from '@documenso/prisma/client';
+import {
+  DocumentStatus,
+  RecipientRole,
+  SigningStatus,
+  WebhookTriggerEvents,
+} from '@documenso/prisma/client';
 import { signPdf } from '@documenso/signing';
 
+import {
+  ZWebhookDocumentSchema,
+  mapDocumentToWebhookDocumentPayload,
+} from '../../types/webhook-payload';
 import type { RequestMetadata } from '../../universal/extract-request-metadata';
 import { getFile } from '../../universal/upload/get-file';
-import { putFile } from '../../universal/upload/put-file';
+import { putPdfFile } from '../../universal/upload/put-file';
+import { fieldsContainUnsignedRequiredField } from '../../utils/advanced-fields-helpers';
+import { getCertificatePdf } from '../htmltopdf/get-certificate-pdf';
+import { flattenAnnotations } from '../pdf/flatten-annotations';
+import { flattenForm } from '../pdf/flatten-form';
 import { insertFieldInPDF } from '../pdf/insert-field-in-pdf';
+import { normalizeSignatureAppearances } from '../pdf/normalize-signature-appearances';
 import { triggerWebhook } from '../webhooks/trigger/trigger-webhook';
 import { sendCompletedEmail } from './send-completed-email';
 
@@ -32,15 +43,28 @@ export const sealDocument = async ({
   isResealing = false,
   requestMetadata,
 }: SealDocumentOptions) => {
-  'use server';
-
   const document = await prisma.document.findFirstOrThrow({
     where: {
       id: documentId,
+      recipients: {
+        every: {
+          signingStatus: SigningStatus.SIGNED,
+        },
+      },
     },
     include: {
       documentData: true,
-      Recipient: true,
+      documentMeta: true,
+      recipients: true,
+      team: {
+        select: {
+          teamGlobalSettings: {
+            select: {
+              includeSigningCertificate: true,
+            },
+          },
+        },
+      },
     },
   });
 
@@ -48,10 +72,6 @@ export const sealDocument = async ({
 
   if (!documentData) {
     throw new Error(`Document ${document.id} has no document data`);
-  }
-
-  if (document.status !== DocumentStatus.COMPLETED) {
-    throw new Error(`Document ${document.id} has not been completed`);
   }
 
   const recipients = await prisma.recipient.findMany({
@@ -72,12 +92,12 @@ export const sealDocument = async ({
       documentId: document.id,
     },
     include: {
-      Signature: true,
+      signature: true,
     },
   });
 
-  if (fields.some((field) => !field.inserted)) {
-    throw new Error(`Document ${document.id} has unsigned fields`);
+  if (fieldsContainUnsignedRequiredField(fields)) {
+    throw new Error(`Document ${document.id} has unsigned required fields`);
   }
 
   if (isResealing) {
@@ -89,46 +109,46 @@ export const sealDocument = async ({
   // !: Need to write the fields onto the document as a hard copy
   const pdfData = await getFile(documentData);
 
+  const certificateData =
+    (document.team?.teamGlobalSettings?.includeSigningCertificate ?? true)
+      ? await getCertificatePdf({
+          documentId,
+          language: document.documentMeta?.language,
+        }).catch(() => null)
+      : null;
+
   const doc = await PDFDocument.load(pdfData);
 
-  const form = doc.getForm();
+  // Normalize and flatten layers that could cause issues with the signature
+  normalizeSignatureAppearances(doc);
+  flattenForm(doc);
+  flattenAnnotations(doc);
 
-  // Remove old signatures
-  for (const field of form.getFields()) {
-    if (field instanceof PDFSignature) {
-      field.acroField.getWidgets().forEach((widget) => {
-        widget.ensureAP();
+  if (certificateData) {
+    const certificate = await PDFDocument.load(certificateData);
 
-        try {
-          widget.getNormalAppearance();
-        } catch (e) {
-          const { context } = widget.dict;
+    const certificatePages = await doc.copyPages(certificate, certificate.getPageIndices());
 
-          const xobj = context.formXObject([rectangle(0, 0, 0, 0)]);
-
-          const streamRef = context.register(xobj);
-
-          widget.setNormalAppearance(streamRef);
-        }
-      });
-    }
+    certificatePages.forEach((page) => {
+      doc.addPage(page);
+    });
   }
-
-  // Flatten the form to stop annotation layers from appearing above documenso fields
-  form.flatten();
 
   for (const field of fields) {
     await insertFieldInPDF(doc, field);
   }
 
+  // Re-flatten post-insertion to handle fields that create arcoFields
+  flattenForm(doc);
+
   const pdfBytes = await doc.save();
 
   const pdfBuffer = await signPdf({ pdf: Buffer.from(pdfBytes) });
 
-  const { name, ext } = path.parse(document.title);
+  const { name } = path.parse(document.title);
 
-  const { data: newData } = await putFile({
-    name: `${name}_signed${ext}`,
+  const { data: newData } = await putPdfFile({
+    name: `${name}_signed.pdf`,
     type: 'application/pdf',
     arrayBuffer: async () => Promise.resolve(pdfBuffer),
   });
@@ -146,6 +166,16 @@ export const sealDocument = async ({
   }
 
   await prisma.$transaction(async (tx) => {
+    await tx.document.update({
+      where: {
+        id: document.id,
+      },
+      data: {
+        status: DocumentStatus.COMPLETED,
+        completedAt: new Date(),
+      },
+    });
+
     await tx.documentData.update({
       where: {
         id: documentData.id,
@@ -172,9 +202,20 @@ export const sealDocument = async ({
     await sendCompletedEmail({ documentId, requestMetadata });
   }
 
+  const updatedDocument = await prisma.document.findFirstOrThrow({
+    where: {
+      id: document.id,
+    },
+    include: {
+      documentData: true,
+      documentMeta: true,
+      recipients: true,
+    },
+  });
+
   await triggerWebhook({
     event: WebhookTriggerEvents.DOCUMENT_COMPLETED,
-    data: document,
+    data: ZWebhookDocumentSchema.parse(mapDocumentToWebhookDocumentPayload(updatedDocument)),
     userId: document.userId,
     teamId: document.teamId ?? undefined,
   });

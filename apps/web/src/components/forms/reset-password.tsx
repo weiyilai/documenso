@@ -3,10 +3,13 @@
 import { useRouter } from 'next/navigation';
 
 import { zodResolver } from '@hookform/resolvers/zod';
+import { Trans, msg } from '@lingui/macro';
+import { useLingui } from '@lingui/react';
 import { useForm } from 'react-hook-form';
+import { match } from 'ts-pattern';
 import { z } from 'zod';
 
-import { TRPCClientError } from '@documenso/trpc/client';
+import { AppError, AppErrorCode } from '@documenso/lib/errors/app-error';
 import { trpc } from '@documenso/trpc/react';
 import { ZPasswordSchema } from '@documenso/trpc/server/auth-router/schema';
 import { cn } from '@documenso/ui/lib/utils';
@@ -42,6 +45,7 @@ export type ResetPasswordFormProps = {
 export const ResetPasswordForm = ({ className, token }: ResetPasswordFormProps) => {
   const router = useRouter();
 
+  const { _ } = useLingui();
   const { toast } = useToast();
 
   const form = useForm<TResetPasswordFormSchema>({
@@ -66,27 +70,32 @@ export const ResetPasswordForm = ({ className, token }: ResetPasswordFormProps) 
       form.reset();
 
       toast({
-        title: 'Password updated',
-        description: 'Your password has been updated successfully.',
+        title: _(msg`Password updated`),
+        description: _(msg`Your password has been updated successfully.`),
         duration: 5000,
       });
 
       router.push('/signin');
     } catch (err) {
-      if (err instanceof TRPCClientError && err.data?.code === 'BAD_REQUEST') {
-        toast({
-          title: 'An error occurred',
-          description: err.message,
-          variant: 'destructive',
-        });
-      } else {
-        toast({
-          title: 'An unknown error occurred',
-          variant: 'destructive',
-          description:
-            'We encountered an unknown error while attempting to reset your password. Please try again later.',
-        });
-      }
+      const error = AppError.parseError(err);
+
+      const errorMessage = match(error.code)
+        .with(AppErrorCode.EXPIRED_CODE, () => msg`Token has expired. Please try again.`)
+        .with('INVALID_TOKEN', () => msg`Invalid token provided. Please try again.`)
+        .with(
+          'SAME_PASSWORD',
+          () => msg`Your new password cannot be the same as your old password.`,
+        )
+        .otherwise(
+          () =>
+            msg`We encountered an unknown error while attempting to reset your password. Please try again later.`,
+        );
+
+      toast({
+        title: _(msg`An error occurred`),
+        description: _(errorMessage),
+        variant: 'destructive',
+      });
     }
   };
 
@@ -102,7 +111,9 @@ export const ResetPasswordForm = ({ className, token }: ResetPasswordFormProps) 
             name="password"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Password</FormLabel>
+                <FormLabel>
+                  <Trans>Password</Trans>
+                </FormLabel>
                 <FormControl>
                   <PasswordInput {...field} />
                 </FormControl>
@@ -116,7 +127,9 @@ export const ResetPasswordForm = ({ className, token }: ResetPasswordFormProps) 
             name="repeatedPassword"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Repeat Password</FormLabel>
+                <FormLabel>
+                  <Trans>Repeat Password</Trans>
+                </FormLabel>
                 <FormControl>
                   <PasswordInput {...field} />
                 </FormControl>
@@ -127,7 +140,7 @@ export const ResetPasswordForm = ({ className, token }: ResetPasswordFormProps) 
         </fieldset>
 
         <Button type="submit" size="lg" loading={isSubmitting}>
-          {isSubmitting ? 'Resetting Password...' : 'Reset Password'}
+          {isSubmitting ? <Trans>Resetting Password...</Trans> : <Trans>Reset Password</Trans>}
         </Button>
       </form>
     </Form>

@@ -1,8 +1,105 @@
 import { z } from 'zod';
 
+import { ZRecipientActionAuthSchema } from '@documenso/lib/types/document-auth';
+import { ZFieldSchema } from '@documenso/lib/types/field';
+import { ZFieldMetaSchema } from '@documenso/lib/types/field-meta';
 import { FieldType } from '@documenso/prisma/client';
 
-export const ZAddFieldsMutationSchema = z.object({
+const ZCreateFieldSchema = z.object({
+  recipientId: z.number().describe('The ID of the recipient to create the field for.'),
+  type: ZFieldSchema.shape.type.describe('The type of the field to create.'),
+  pageNumber: z.number().describe('The page number the field will be on.'),
+  pageX: z.number().describe('The X coordinate of where the field will be placed.'),
+  pageY: z.number().describe('The Y coordinate of where the field will be placed.'),
+  width: z.number().describe('The width of the field.'),
+  height: z.number().describe('The height of the field.'),
+  fieldMeta: ZFieldMetaSchema.optional(),
+});
+
+const ZUpdateFieldSchema = z.object({
+  id: z.number().describe('The ID of the field to update.'),
+  type: ZFieldSchema.shape.type.optional().describe('The type of the field to update.'),
+  pageNumber: z.number().optional().describe('The page number the field will be on.'),
+  pageX: z.number().optional().describe('The X coordinate of where the field will be placed.'),
+  pageY: z.number().optional().describe('The Y coordinate of where the field will be placed.'),
+  width: z.number().optional().describe('The width of the field.'),
+  height: z.number().optional().describe('The height of the field.'),
+  fieldMeta: ZFieldMetaSchema.optional(),
+});
+
+export const ZCreateDocumentFieldRequestSchema = z.object({
+  documentId: z.number(),
+  field: ZCreateFieldSchema,
+});
+
+export const ZCreateDocumentFieldResponseSchema = ZFieldSchema;
+
+export const ZCreateDocumentFieldsRequestSchema = z.object({
+  documentId: z.number(),
+  fields: ZCreateFieldSchema.array(),
+});
+
+export const ZCreateDocumentFieldsResponseSchema = z.object({
+  fields: z.array(ZFieldSchema),
+});
+
+export const ZUpdateDocumentFieldRequestSchema = z.object({
+  documentId: z.number(),
+  field: ZUpdateFieldSchema,
+});
+
+export const ZUpdateDocumentFieldResponseSchema = ZFieldSchema;
+
+export const ZUpdateDocumentFieldsRequestSchema = z.object({
+  documentId: z.number(),
+  fields: ZUpdateFieldSchema.array(),
+});
+
+export const ZUpdateDocumentFieldsResponseSchema = z.object({
+  fields: z.array(ZFieldSchema),
+});
+
+export const ZDeleteDocumentFieldRequestSchema = z.object({
+  fieldId: z.number(),
+});
+
+export const ZCreateTemplateFieldRequestSchema = z.object({
+  templateId: z.number(),
+  field: ZCreateFieldSchema,
+});
+
+export const ZCreateTemplateFieldResponseSchema = ZFieldSchema;
+
+export const ZCreateTemplateFieldsRequestSchema = z.object({
+  templateId: z.number(),
+  fields: ZCreateFieldSchema.array(),
+});
+
+export const ZCreateTemplateFieldsResponseSchema = z.object({
+  fields: z.array(ZFieldSchema),
+});
+
+export const ZUpdateTemplateFieldRequestSchema = z.object({
+  templateId: z.number(),
+  field: ZUpdateFieldSchema,
+});
+
+export const ZUpdateTemplateFieldsRequestSchema = z.object({
+  templateId: z.number(),
+  fields: ZUpdateFieldSchema.array(),
+});
+
+export const ZUpdateTemplateFieldsResponseSchema = z.object({
+  fields: z.array(ZFieldSchema),
+});
+
+export const ZUpdateTemplateFieldResponseSchema = ZFieldSchema;
+
+export const ZDeleteTemplateFieldRequestSchema = z.object({
+  fieldId: z.number(),
+});
+
+export const ZSetDocumentFieldsRequestSchema = z.object({
   documentId: z.number(),
   fields: z.array(
     z.object({
@@ -15,13 +112,16 @@ export const ZAddFieldsMutationSchema = z.object({
       pageY: z.number().min(0),
       pageWidth: z.number().min(0),
       pageHeight: z.number().min(0),
+      fieldMeta: ZFieldMetaSchema,
     }),
   ),
 });
 
-export type TAddFieldsMutationSchema = z.infer<typeof ZAddFieldsMutationSchema>;
+export const ZSetDocumentFieldsResponseSchema = z.object({
+  fields: z.array(ZFieldSchema),
+});
 
-export const ZAddTemplateFieldsMutationSchema = z.object({
+export const ZSetFieldsForTemplateRequestSchema = z.object({
   templateId: z.number(),
   fields: z.array(
     z.object({
@@ -34,17 +134,21 @@ export const ZAddTemplateFieldsMutationSchema = z.object({
       pageY: z.number().min(0),
       pageWidth: z.number().min(0),
       pageHeight: z.number().min(0),
+      fieldMeta: ZFieldMetaSchema,
     }),
   ),
 });
 
-export type TAddTemplateFieldsMutationSchema = z.infer<typeof ZAddTemplateFieldsMutationSchema>;
+export const ZSetFieldsForTemplateResponseSchema = z.object({
+  fields: z.array(ZFieldSchema),
+});
 
 export const ZSignFieldWithTokenMutationSchema = z.object({
   token: z.string(),
   fieldId: z.number(),
   value: z.string().trim(),
   isBase64: z.boolean().optional(),
+  authOptions: ZRecipientActionAuthSchema.optional(),
 });
 
 export type TSignFieldWithTokenMutationSchema = z.infer<typeof ZSignFieldWithTokenMutationSchema>;
@@ -57,3 +161,9 @@ export const ZRemovedSignedFieldWithTokenMutationSchema = z.object({
 export type TRemovedSignedFieldWithTokenMutationSchema = z.infer<
   typeof ZRemovedSignedFieldWithTokenMutationSchema
 >;
+
+export const ZGetFieldRequestSchema = z.object({
+  fieldId: z.number(),
+});
+
+export const ZGetFieldResponseSchema = ZFieldSchema;

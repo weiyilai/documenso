@@ -1,6 +1,10 @@
+import { Plural, Trans, msg } from '@lingui/macro';
+import { useLingui } from '@lingui/react';
 import { DateTime } from 'luxon';
 import type Stripe from 'stripe';
+import { match } from 'ts-pattern';
 
+import { setupI18nSSR } from '@documenso/lib/client-only/providers/i18n.server';
 import { getRequiredServerComponentSession } from '@documenso/lib/next-auth/get-server-component-session';
 import { stripe } from '@documenso/lib/server-only/stripe';
 import { getTeamByUrl } from '@documenso/lib/server-only/team/get-team';
@@ -18,6 +22,10 @@ export type TeamsSettingsBillingPageProps = {
 };
 
 export default async function TeamsSettingBillingPage({ params }: TeamsSettingsBillingPageProps) {
+  await setupI18nSSR();
+
+  const { _ } = useLingui();
+
   const session = await getRequiredServerComponentSession();
 
   const team = await getTeamByUrl({ userId: session.user.id, teamUrl: params.teamUrl });
@@ -32,32 +40,42 @@ export default async function TeamsSettingBillingPage({ params }: TeamsSettingsB
 
   const formatTeamSubscriptionDetails = (subscription: Stripe.Subscription | null) => {
     if (!subscription) {
-      return 'No payment required';
+      return <Trans>No payment required</Trans>;
     }
 
     const numberOfSeats = subscription.items.data[0].quantity ?? 0;
-
-    const formattedTeamMemberQuanity = numberOfSeats > 1 ? `${numberOfSeats} members` : '1 member';
 
     const formattedDate = DateTime.fromSeconds(subscription.current_period_end).toFormat(
       'LLL dd, yyyy',
     );
 
-    return `${formattedTeamMemberQuanity} • Monthly • Renews: ${formattedDate}`;
+    const subscriptionInterval = match(subscription?.items.data[0].plan.interval)
+      .with('year', () => _(msg`Yearly`))
+      .with('month', () => _(msg`Monthly`))
+      .otherwise(() => _(msg`Unknown`));
+
+    return (
+      <span>
+        <Plural value={numberOfSeats} one="# member" other="# members" />
+        {' • '}
+        <span>{subscriptionInterval}</span>
+        {' • '}
+        <Trans>Renews: {formattedDate}</Trans>
+      </span>
+    );
   };
 
   return (
     <div>
-      <SettingsHeader title="Billing" subtitle="Your subscription is currently active." />
+      <SettingsHeader
+        title={_(msg`Billing`)}
+        subtitle={_(msg`Your subscription is currently active.`)}
+      />
 
       <Card gradient className="shadow-sm">
         <CardContent className="flex flex-row items-center justify-between p-4">
           <div className="flex flex-col text-sm">
             <p className="text-foreground font-semibold">
-              Current plan: {teamSubscription ? 'Team' : 'Community Team'}
-            </p>
-
-            <p className="text-muted-foreground mt-0.5">
               {formatTeamSubscriptionDetails(teamSubscription)}
             </p>
           </div>
@@ -66,8 +84,8 @@ export default async function TeamsSettingBillingPage({ params }: TeamsSettingsB
             <div
               title={
                 canManageBilling
-                  ? 'Manage team subscription.'
-                  : 'You must be an admin of this team to manage billing.'
+                  ? _(msg`Manage team subscription.`)
+                  : _(msg`You must be an admin of this team to manage billing.`)
               }
             >
               <TeamBillingPortalButton teamId={team.id} />

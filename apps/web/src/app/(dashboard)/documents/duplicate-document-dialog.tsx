@@ -1,5 +1,8 @@
 import { useRouter } from 'next/navigation';
 
+import { Trans, msg } from '@lingui/macro';
+import { useLingui } from '@lingui/react';
+
 import { formatDocumentsPath } from '@documenso/lib/utils/teams';
 import type { Team } from '@documenso/prisma/client';
 import { trpc as trpcReact } from '@documenso/trpc/react';
@@ -28,11 +31,12 @@ export const DuplicateDocumentDialog = ({
   team,
 }: DuplicateDocumentDialogProps) => {
   const router = useRouter();
+
   const { toast } = useToast();
+  const { _ } = useLingui();
 
   const { data: document, isLoading } = trpcReact.document.getDocumentById.useQuery({
-    id,
-    teamId: team?.id,
+    documentId: id,
   });
 
   const documentData = document?.documentData
@@ -50,8 +54,8 @@ export const DuplicateDocumentDialog = ({
         router.push(`${documentsPath}/${newId}/edit`);
 
         toast({
-          title: 'Document Duplicated',
-          description: 'Your document has been successfully duplicated.',
+          title: _(msg`Document Duplicated`),
+          description: _(msg`Your document has been successfully duplicated.`),
           duration: 5000,
         });
 
@@ -61,11 +65,11 @@ export const DuplicateDocumentDialog = ({
 
   const onDuplicate = async () => {
     try {
-      await duplicateDocument({ id, teamId: team?.id });
+      await duplicateDocument({ documentId: id });
     } catch {
       toast({
-        title: 'Something went wrong',
-        description: 'This document could not be duplicated at this time. Please try again.',
+        title: _(msg`Something went wrong`),
+        description: _(msg`This document could not be duplicated at this time. Please try again.`),
         variant: 'destructive',
         duration: 7500,
       });
@@ -76,16 +80,18 @@ export const DuplicateDocumentDialog = ({
     <Dialog open={open} onOpenChange={(value) => !isLoading && onOpenChange(value)}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Duplicate</DialogTitle>
+          <DialogTitle>
+            <Trans>Duplicate</Trans>
+          </DialogTitle>
         </DialogHeader>
         {!documentData || isLoading ? (
           <div className="mx-auto -mt-4 flex w-full max-w-screen-xl flex-col px-4 md:px-8">
             <h1 className="mt-4 grow-0 truncate text-2xl font-semibold md:text-3xl">
-              Loading Document...
+              <Trans>Loading Document...</Trans>
             </h1>
           </div>
         ) : (
-          <div className="p-2 [&>div]:h-[50vh] [&>div]:overflow-y-scroll  ">
+          <div className="p-2 [&>div]:h-[50vh] [&>div]:overflow-y-scroll">
             <LazyPDFViewer key={document?.id} documentData={documentData} />
           </div>
         )}
@@ -98,7 +104,7 @@ export const DuplicateDocumentDialog = ({
               onClick={() => onOpenChange(false)}
               className="flex-1"
             >
-              Cancel
+              <Trans>Cancel</Trans>
             </Button>
 
             <Button
@@ -108,7 +114,7 @@ export const DuplicateDocumentDialog = ({
               onClick={onDuplicate}
               className="flex-1"
             >
-              Duplicate
+              <Trans>Duplicate</Trans>
             </Button>
           </div>
         </DialogFooter>

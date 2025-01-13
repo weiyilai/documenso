@@ -1,31 +1,43 @@
+import { isDeepEqual } from 'remeda';
+
+import { validateCheckboxField } from '@documenso/lib/advanced-fields-validation/validate-checkbox';
+import { validateDropdownField } from '@documenso/lib/advanced-fields-validation/validate-dropdown';
+import { validateNumberField } from '@documenso/lib/advanced-fields-validation/validate-number';
+import { validateRadioField } from '@documenso/lib/advanced-fields-validation/validate-radio';
+import { validateTextField } from '@documenso/lib/advanced-fields-validation/validate-text';
 import { DOCUMENT_AUDIT_LOG_TYPE } from '@documenso/lib/types/document-audit-logs';
-import type { RequestMetadata } from '@documenso/lib/universal/extract-request-metadata';
+import {
+  type TFieldMetaSchema as FieldMeta,
+  ZCheckboxFieldMeta,
+  ZDropdownFieldMeta,
+  ZFieldMetaSchema,
+  ZNumberFieldMeta,
+  ZRadioFieldMeta,
+  ZTextFieldMeta,
+} from '@documenso/lib/types/field-meta';
+import type { ApiRequestMetadata } from '@documenso/lib/universal/extract-request-metadata';
 import {
   createDocumentAuditLogData,
   diffFieldChanges,
 } from '@documenso/lib/utils/document-audit-logs';
 import { prisma } from '@documenso/prisma';
-import type { FieldType } from '@documenso/prisma/client';
-import { SendStatus, SigningStatus } from '@documenso/prisma/client';
+import type { Field } from '@documenso/prisma/client';
+import { FieldType } from '@documenso/prisma/client';
+
+import { AppError, AppErrorCode } from '../../errors/app-error';
+import { canRecipientFieldsBeModified } from '../../utils/recipients';
 
 export interface SetFieldsForDocumentOptions {
   userId: number;
+  teamId?: number;
   documentId: number;
-  fields: {
-    id?: number | null;
-    type: FieldType;
-    signerEmail: string;
-    pageNumber: number;
-    pageX: number;
-    pageY: number;
-    pageWidth: number;
-    pageHeight: number;
-  }[];
-  requestMetadata?: RequestMetadata;
+  fields: FieldData[];
+  requestMetadata: ApiRequestMetadata;
 }
 
 export const setFieldsForDocument = async ({
   userId,
+  teamId,
   documentId,
   fields,
   requestMetadata,
@@ -33,40 +45,37 @@ export const setFieldsForDocument = async ({
   const document = await prisma.document.findFirst({
     where: {
       id: documentId,
-      OR: [
-        {
-          userId,
-        },
-        {
-          team: {
-            members: {
-              some: {
-                userId,
+      ...(teamId
+        ? {
+            team: {
+              id: teamId,
+              members: {
+                some: {
+                  userId,
+                },
               },
             },
-          },
-        },
-      ],
+          }
+        : {
+            userId,
+            teamId: null,
+          }),
     },
-  });
-
-  const user = await prisma.user.findFirstOrThrow({
-    where: {
-      id: userId,
-    },
-    select: {
-      id: true,
-      name: true,
-      email: true,
+    include: {
+      recipients: true,
     },
   });
 
   if (!document) {
-    throw new Error('Document not found');
+    throw new AppError(AppErrorCode.NOT_FOUND, {
+      message: 'Document not found',
+    });
   }
 
   if (document.completedAt) {
-    throw new Error('Document already complete');
+    throw new AppError(AppErrorCode.INVALID_REQUEST, {
+      message: 'Document already complete',
+    });
   }
 
   const existingFields = await prisma.field.findMany({
@@ -74,7 +83,7 @@ export const setFieldsForDocument = async ({
       documentId,
     },
     include: {
-      Recipient: true,
+      recipient: true,
     },
   });
 
@@ -82,26 +91,120 @@ export const setFieldsForDocument = async ({
     (existingField) => !fields.find((field) => field.id === existingField.id),
   );
 
-  const linkedFields = fields
-    .map((field) => {
-      const existing = existingFields.find((existingField) => existingField.id === field.id);
+  const linkedFields = fields.map((field) => {
+    const existing = existingFields.find((existingField) => existingField.id === field.id);
 
-      return {
-        ...field,
-        _persisted: existing,
-      };
-    })
-    .filter((field) => {
-      return (
-        field._persisted?.Recipient?.sendStatus !== SendStatus.SENT &&
-        field._persisted?.Recipient?.signingStatus !== SigningStatus.SIGNED
-      );
-    });
+    const recipient = document.recipients.find(
+      (recipient) => recipient.email.toLowerCase() === field.signerEmail.toLowerCase(),
+    );
+
+    // Each field MUST have a recipient associated with it.
+    if (!recipient) {
+      throw new AppError(AppErrorCode.INVALID_REQUEST, {
+        message: `Recipient not found for field ${field.id}`,
+      });
+    }
+
+    // Check whether the existing field can be modified.
+    if (
+      existing &&
+      hasFieldBeenChanged(existing, field) &&
+      !canRecipientFieldsBeModified(recipient, existingFields)
+    ) {
+      throw new AppError(AppErrorCode.INVALID_REQUEST, {
+        message:
+          'Cannot modify a field where the recipient has already interacted with the document',
+      });
+    }
+
+    return {
+      ...field,
+      _persisted: existing,
+      _recipient: recipient,
+    };
+  });
 
   const persistedFields = await prisma.$transaction(async (tx) => {
-    await Promise.all(
+    return await Promise.all(
       linkedFields.map(async (field) => {
         const fieldSignerEmail = field.signerEmail.toLowerCase();
+
+        const parsedFieldMeta = field.fieldMeta
+          ? ZFieldMetaSchema.parse(field.fieldMeta)
+          : undefined;
+
+        if (field.type === FieldType.TEXT && field.fieldMeta) {
+          const textFieldParsedMeta = ZTextFieldMeta.parse(field.fieldMeta);
+          const errors = validateTextField(textFieldParsedMeta.text || '', textFieldParsedMeta);
+
+          if (errors.length > 0) {
+            throw new Error(errors.join(', '));
+          }
+        }
+
+        if (field.type === FieldType.NUMBER && field.fieldMeta) {
+          const numberFieldParsedMeta = ZNumberFieldMeta.parse(field.fieldMeta);
+          const errors = validateNumberField(
+            String(numberFieldParsedMeta.value),
+            numberFieldParsedMeta,
+          );
+
+          if (errors.length > 0) {
+            throw new Error(errors.join(', '));
+          }
+        }
+
+        if (field.type === FieldType.CHECKBOX) {
+          if (field.fieldMeta) {
+            const checkboxFieldParsedMeta = ZCheckboxFieldMeta.parse(field.fieldMeta);
+            const errors = validateCheckboxField(
+              checkboxFieldParsedMeta?.values?.map((item) => item.value) ?? [],
+              checkboxFieldParsedMeta,
+            );
+
+            if (errors.length > 0) {
+              throw new Error(errors.join(', '));
+            }
+          } else {
+            throw new Error(
+              'To proceed further, please set at least one value for the Checkbox field',
+            );
+          }
+        }
+
+        if (field.type === FieldType.RADIO) {
+          if (field.fieldMeta) {
+            const radioFieldParsedMeta = ZRadioFieldMeta.parse(field.fieldMeta);
+            const checkedRadioFieldValue = radioFieldParsedMeta.values?.find(
+              (option) => option.checked,
+            )?.value;
+
+            const errors = validateRadioField(checkedRadioFieldValue, radioFieldParsedMeta);
+
+            if (errors.length > 0) {
+              throw new Error(errors.join('. '));
+            }
+          } else {
+            throw new Error(
+              'To proceed further, please set at least one value for the Radio field',
+            );
+          }
+        }
+
+        if (field.type === FieldType.DROPDOWN) {
+          if (field.fieldMeta) {
+            const dropdownFieldParsedMeta = ZDropdownFieldMeta.parse(field.fieldMeta);
+            const errors = validateDropdownField(undefined, dropdownFieldParsedMeta);
+
+            if (errors.length > 0) {
+              throw new Error(errors.join('. '));
+            }
+          } else {
+            throw new Error(
+              'To proceed further, please set at least one value for the Dropdown field',
+            );
+          }
+        }
 
         const upsertedField = await tx.field.upsert({
           where: {
@@ -114,6 +217,7 @@ export const setFieldsForDocument = async ({
             positionY: field.pageY,
             width: field.pageWidth,
             height: field.pageHeight,
+            fieldMeta: parsedFieldMeta,
           },
           create: {
             type: field.type,
@@ -124,12 +228,13 @@ export const setFieldsForDocument = async ({
             height: field.pageHeight,
             customText: '',
             inserted: false,
-            Document: {
+            fieldMeta: parsedFieldMeta,
+            document: {
               connect: {
                 id: documentId,
               },
             },
-            Recipient: {
+            recipient: {
               connect: {
                 documentId_email: {
                   documentId,
@@ -159,8 +264,7 @@ export const setFieldsForDocument = async ({
             data: createDocumentAuditLogData({
               type: DOCUMENT_AUDIT_LOG_TYPE.FIELD_UPDATED,
               documentId: documentId,
-              user,
-              requestMetadata,
+              metadata: requestMetadata,
               data: {
                 changes,
                 ...baseAuditLog,
@@ -175,8 +279,7 @@ export const setFieldsForDocument = async ({
             data: createDocumentAuditLogData({
               type: DOCUMENT_AUDIT_LOG_TYPE.FIELD_CREATED,
               documentId: documentId,
-              user,
-              requestMetadata,
+              metadata: requestMetadata,
               data: {
                 ...baseAuditLog,
               },
@@ -204,11 +307,10 @@ export const setFieldsForDocument = async ({
           createDocumentAuditLogData({
             type: DOCUMENT_AUDIT_LOG_TYPE.FIELD_DELETED,
             documentId: documentId,
-            user,
-            requestMetadata,
+            metadata: requestMetadata,
             data: {
               fieldId: field.secondaryId,
-              fieldRecipientEmail: field.Recipient?.email ?? '',
+              fieldRecipientEmail: field.recipient?.email ?? '',
               fieldRecipientId: field.recipientId ?? -1,
               fieldType: field.type,
             },
@@ -218,5 +320,45 @@ export const setFieldsForDocument = async ({
     });
   }
 
-  return persistedFields;
+  // Filter out fields that have been removed or have been updated.
+  const filteredFields = existingFields.filter((field) => {
+    const isRemoved = removedFields.find((removedField) => removedField.id === field.id);
+    const isUpdated = persistedFields.find((persistedField) => persistedField.id === field.id);
+
+    return !isRemoved && !isUpdated;
+  });
+
+  return {
+    fields: [...filteredFields, ...persistedFields],
+  };
+};
+
+/**
+ * If you change this you MUST update the `hasFieldBeenChanged` function.
+ */
+type FieldData = {
+  id?: number | null;
+  type: FieldType;
+  signerEmail: string;
+  pageNumber: number;
+  pageX: number;
+  pageY: number;
+  pageWidth: number;
+  pageHeight: number;
+  fieldMeta?: FieldMeta;
+};
+
+const hasFieldBeenChanged = (field: Field, newFieldData: FieldData) => {
+  const currentFieldMeta = field.fieldMeta || null;
+  const newFieldMeta = newFieldData.fieldMeta || null;
+
+  return (
+    field.type !== newFieldData.type ||
+    field.page !== newFieldData.pageNumber ||
+    field.positionX.toNumber() !== newFieldData.pageX ||
+    field.positionY.toNumber() !== newFieldData.pageY ||
+    field.width.toNumber() !== newFieldData.pageWidth ||
+    field.height.toNumber() !== newFieldData.pageHeight ||
+    !isDeepEqual(currentFieldMeta, newFieldMeta)
+  );
 };

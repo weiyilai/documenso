@@ -20,24 +20,24 @@ export const removeSignedFieldWithToken = async ({
   const field = await prisma.field.findFirstOrThrow({
     where: {
       id: fieldId,
-      Recipient: {
+      recipient: {
         token,
       },
     },
     include: {
-      Document: true,
-      Recipient: true,
+      document: true,
+      recipient: true,
     },
   });
 
-  const { Document: document, Recipient: recipient } = field;
+  const { document, recipient } = field;
 
   if (!document) {
     throw new Error(`Document not found for field ${field.id}`);
   }
 
-  if (document.status === DocumentStatus.COMPLETED) {
-    throw new Error(`Document ${document.id} has already been completed`);
+  if (document.status !== DocumentStatus.PENDING) {
+    throw new Error(`Document ${document.id} must be pending`);
   }
 
   if (recipient?.signingStatus === SigningStatus.SIGNED) {

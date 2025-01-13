@@ -3,13 +3,15 @@
 import { useRouter } from 'next/navigation';
 
 import { zodResolver } from '@hookform/resolvers/zod';
+import { Trans, msg } from '@lingui/macro';
+import { useLingui } from '@lingui/react';
 import { signIn } from 'next-auth/react';
 import { useForm } from 'react-hook-form';
 import { FcGoogle } from 'react-icons/fc';
 import { z } from 'zod';
 
 import { useAnalytics } from '@documenso/lib/client-only/hooks/use-analytics';
-import { TRPCClientError } from '@documenso/trpc/client';
+import { AppError } from '@documenso/lib/errors/app-error';
 import { trpc } from '@documenso/trpc/react';
 import { ZPasswordSchema } from '@documenso/trpc/server/auth-router/schema';
 import { cn } from '@documenso/ui/lib/utils';
@@ -26,6 +28,8 @@ import { Input } from '@documenso/ui/primitives/input';
 import { PasswordInput } from '@documenso/ui/primitives/password-input';
 import { SignaturePad } from '@documenso/ui/primitives/signature-pad';
 import { useToast } from '@documenso/ui/primitives/use-toast';
+
+import { signupErrorMessages } from './v2/signup';
 
 const SIGN_UP_REDIRECT_PATH = '/documents';
 
@@ -52,10 +56,18 @@ export type SignUpFormProps = {
   className?: string;
   initialEmail?: string;
   isGoogleSSOEnabled?: boolean;
+  isOIDCSSOEnabled?: boolean;
 };
 
-export const SignUpForm = ({ className, initialEmail, isGoogleSSOEnabled }: SignUpFormProps) => {
+export const SignUpForm = ({
+  className,
+  initialEmail,
+  isGoogleSSOEnabled,
+  isOIDCSSOEnabled,
+}: SignUpFormProps) => {
+  const { _ } = useLingui();
   const { toast } = useToast();
+
   const analytics = useAnalytics();
   const router = useRouter();
 
@@ -80,9 +92,10 @@ export const SignUpForm = ({ className, initialEmail, isGoogleSSOEnabled }: Sign
       router.push(`/unverified-account`);
 
       toast({
-        title: 'Registration Successful',
-        description:
-          'You have successfully registered. Please verify your account by clicking on the link you received in the email.',
+        title: _(msg`Registration Successful`),
+        description: _(
+          msg`You have successfully registered. Please verify your account by clicking on the link you received in the email.`,
+        ),
         duration: 5000,
       });
 
@@ -91,20 +104,15 @@ export const SignUpForm = ({ className, initialEmail, isGoogleSSOEnabled }: Sign
         timestamp: new Date().toISOString(),
       });
     } catch (err) {
-      if (err instanceof TRPCClientError && err.data?.code === 'BAD_REQUEST') {
-        toast({
-          title: 'An error occurred',
-          description: err.message,
-          variant: 'destructive',
-        });
-      } else {
-        toast({
-          title: 'An unknown error occurred',
-          description:
-            'We encountered an unknown error while attempting to sign you up. Please try again later.',
-          variant: 'destructive',
-        });
-      }
+      const error = AppError.parseError(err);
+
+      const errorMessage = signupErrorMessages[error.code] ?? signupErrorMessages.INVALID_REQUEST;
+
+      toast({
+        title: _(msg`An error occurred`),
+        description: _(errorMessage),
+        variant: 'destructive',
+      });
     }
   };
 
@@ -113,9 +121,24 @@ export const SignUpForm = ({ className, initialEmail, isGoogleSSOEnabled }: Sign
       await signIn('google', { callbackUrl: SIGN_UP_REDIRECT_PATH });
     } catch (err) {
       toast({
-        title: 'An unknown error occurred',
-        description:
-          'We encountered an unknown error while attempting to sign you Up. Please try again later.',
+        title: _(msg`An unknown error occurred`),
+        description: _(
+          msg`We encountered an unknown error while attempting to sign you Up. Please try again later.`,
+        ),
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const onSignUpWithOIDCClick = async () => {
+    try {
+      await signIn('oidc', { callbackUrl: SIGN_UP_REDIRECT_PATH });
+    } catch (err) {
+      toast({
+        title: _(msg`An unknown error occurred`),
+        description: _(
+          msg`We encountered an unknown error while attempting to sign you Up. Please try again later.`,
+        ),
         variant: 'destructive',
       });
     }
@@ -133,7 +156,9 @@ export const SignUpForm = ({ className, initialEmail, isGoogleSSOEnabled }: Sign
             name="name"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Name</FormLabel>
+                <FormLabel>
+                  <Trans>Name</Trans>
+                </FormLabel>
                 <FormControl>
                   <Input type="text" {...field} />
                 </FormControl>
@@ -147,7 +172,9 @@ export const SignUpForm = ({ className, initialEmail, isGoogleSSOEnabled }: Sign
             name="email"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Email</FormLabel>
+                <FormLabel>
+                  <Trans>Email</Trans>
+                </FormLabel>
                 <FormControl>
                   <Input type="email" {...field} />
                 </FormControl>
@@ -161,7 +188,9 @@ export const SignUpForm = ({ className, initialEmail, isGoogleSSOEnabled }: Sign
             name="password"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Password</FormLabel>
+                <FormLabel>
+                  <Trans>Password</Trans>
+                </FormLabel>
                 <FormControl>
                   <PasswordInput {...field} />
                 </FormControl>
@@ -175,7 +204,9 @@ export const SignUpForm = ({ className, initialEmail, isGoogleSSOEnabled }: Sign
             name="signature"
             render={({ field: { onChange } }) => (
               <FormItem>
-                <FormLabel>Sign Here</FormLabel>
+                <FormLabel>
+                  <Trans>Sign Here</Trans>
+                </FormLabel>
                 <FormControl>
                   <SignaturePad
                     className="h-36 w-full"
@@ -197,14 +228,16 @@ export const SignUpForm = ({ className, initialEmail, isGoogleSSOEnabled }: Sign
           loading={isSubmitting}
           className="dark:bg-documenso dark:hover:opacity-90"
         >
-          {isSubmitting ? 'Signing up...' : 'Sign Up'}
+          {isSubmitting ? <Trans>Signing up...</Trans> : <Trans>Sign Up</Trans>}
         </Button>
 
         {isGoogleSSOEnabled && (
           <>
             <div className="relative flex items-center justify-center gap-x-4 py-2 text-xs uppercase">
               <div className="bg-border h-px flex-1" />
-              <span className="text-muted-foreground bg-transparent">Or</span>
+              <span className="text-muted-foreground bg-transparent">
+                <Trans>Or</Trans>
+              </span>
               <div className="bg-border h-px flex-1" />
             </div>
 
@@ -217,7 +250,31 @@ export const SignUpForm = ({ className, initialEmail, isGoogleSSOEnabled }: Sign
               onClick={onSignUpWithGoogleClick}
             >
               <FcGoogle className="mr-2 h-5 w-5" />
-              Sign Up with Google
+              <Trans>Sign Up with Google</Trans>
+            </Button>
+          </>
+        )}
+
+        {isOIDCSSOEnabled && (
+          <>
+            <div className="relative flex items-center justify-center gap-x-4 py-2 text-xs uppercase">
+              <div className="bg-border h-px flex-1" />
+              <span className="text-muted-foreground bg-transparent">
+                <Trans>Or</Trans>
+              </span>
+              <div className="bg-border h-px flex-1" />
+            </div>
+
+            <Button
+              type="button"
+              size="lg"
+              variant={'outline'}
+              className="bg-background text-muted-foreground border"
+              disabled={isSubmitting}
+              onClick={onSignUpWithOIDCClick}
+            >
+              <FcGoogle className="mr-2 h-5 w-5" />
+              <Trans>Sign Up with OIDC</Trans>
             </Button>
           </>
         )}

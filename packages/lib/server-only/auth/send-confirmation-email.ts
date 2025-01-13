@@ -1,11 +1,14 @@
 import { createElement } from 'react';
 
+import { msg } from '@lingui/macro';
+
 import { mailer } from '@documenso/email/mailer';
-import { render } from '@documenso/email/render';
 import { ConfirmEmailTemplate } from '@documenso/email/templates/confirm-email';
 import { prisma } from '@documenso/prisma';
 
+import { getI18nInstance } from '../../client-only/providers/i18n.server';
 import { NEXT_PUBLIC_WEBAPP_URL } from '../../constants/app';
+import { renderEmailWithI18N } from '../../utils/render-email-with-i18n';
 
 export interface SendConfirmationEmailProps {
   userId: number;
@@ -20,7 +23,7 @@ export const sendConfirmationEmail = async ({ userId }: SendConfirmationEmailPro
       id: userId,
     },
     include: {
-      VerificationToken: {
+      verificationTokens: {
         orderBy: {
           createdAt: 'desc',
         },
@@ -29,7 +32,7 @@ export const sendConfirmationEmail = async ({ userId }: SendConfirmationEmailPro
     },
   });
 
-  const [verificationToken] = user.VerificationToken;
+  const [verificationToken] = user.verificationTokens;
 
   if (!verificationToken?.token) {
     throw new Error('Verification token not found for the user');
@@ -38,12 +41,19 @@ export const sendConfirmationEmail = async ({ userId }: SendConfirmationEmailPro
   const assetBaseUrl = NEXT_PUBLIC_WEBAPP_URL() || 'http://localhost:3000';
   const confirmationLink = `${assetBaseUrl}/verify-email/${verificationToken.token}`;
   const senderName = NEXT_PRIVATE_SMTP_FROM_NAME || 'Documenso';
-  const senderAdress = NEXT_PRIVATE_SMTP_FROM_ADDRESS || 'noreply@documenso.com';
+  const senderAddress = NEXT_PRIVATE_SMTP_FROM_ADDRESS || 'noreply@documenso.com';
 
   const confirmationTemplate = createElement(ConfirmEmailTemplate, {
     assetBaseUrl,
     confirmationLink,
   });
+
+  const [html, text] = await Promise.all([
+    renderEmailWithI18N(confirmationTemplate),
+    renderEmailWithI18N(confirmationTemplate, { plainText: true }),
+  ]);
+
+  const i18n = await getI18nInstance();
 
   return mailer.sendMail({
     to: {
@@ -52,10 +62,10 @@ export const sendConfirmationEmail = async ({ userId }: SendConfirmationEmailPro
     },
     from: {
       name: senderName,
-      address: senderAdress,
+      address: senderAddress,
     },
-    subject: 'Please confirm your email',
-    html: render(confirmationTemplate),
-    text: render(confirmationTemplate, { plainText: true }),
+    subject: i18n._(msg`Please confirm your email`),
+    html,
+    text,
   });
 };

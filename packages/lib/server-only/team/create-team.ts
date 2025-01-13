@@ -31,14 +31,17 @@ export type CreateTeamOptions = {
   teamUrl: string;
 };
 
-export type CreateTeamResponse =
-  | {
-      paymentRequired: false;
-    }
-  | {
-      paymentRequired: true;
-      pendingTeamId: number;
-    };
+export const ZCreateTeamResponseSchema = z.union([
+  z.object({
+    paymentRequired: z.literal(false),
+  }),
+  z.object({
+    paymentRequired: z.literal(true),
+    pendingTeamId: z.number(),
+  }),
+]);
+
+export type TCreateTeamResponse = z.infer<typeof ZCreateTeamResponseSchema>;
 
 /**
  * Create a team or pending team depending on the user's subscription or application's billing settings.
@@ -47,13 +50,13 @@ export const createTeam = async ({
   userId,
   teamName,
   teamUrl,
-}: CreateTeamOptions): Promise<CreateTeamResponse> => {
+}: CreateTeamOptions): Promise<TCreateTeamResponse> => {
   const user = await prisma.user.findUniqueOrThrow({
     where: {
       id: userId,
     },
     include: {
-      Subscription: true,
+      subscriptions: true,
     },
   });
 
@@ -65,7 +68,7 @@ export const createTeam = async ({
       prices.map((price) => price.id),
     );
 
-    isPaymentRequired = !subscriptionsContainsActivePlan(user.Subscription, teamRelatedPriceIds);
+    isPaymentRequired = !subscriptionsContainsActivePlan(user.subscriptions, teamRelatedPriceIds);
 
     customerId = await createTeamCustomer({
       name: user.name ?? teamName,
@@ -76,21 +79,38 @@ export const createTeam = async ({
   try {
     // Create the team directly if no payment is required.
     if (!isPaymentRequired) {
-      await prisma.team.create({
-        data: {
-          name: teamName,
-          url: teamUrl,
-          ownerUserId: user.id,
-          customerId,
-          members: {
-            create: [
-              {
-                userId,
-                role: TeamMemberRole.ADMIN,
-              },
-            ],
+      await prisma.$transaction(async (tx) => {
+        const existingUserProfileWithUrl = await tx.user.findUnique({
+          where: {
+            url: teamUrl,
           },
-        },
+          select: {
+            id: true,
+          },
+        });
+
+        if (existingUserProfileWithUrl) {
+          throw new AppError(AppErrorCode.ALREADY_EXISTS, {
+            message: 'URL already taken.',
+          });
+        }
+
+        await tx.team.create({
+          data: {
+            name: teamName,
+            url: teamUrl,
+            ownerUserId: user.id,
+            customerId,
+            members: {
+              create: [
+                {
+                  userId,
+                  role: TeamMemberRole.ADMIN,
+                },
+              ],
+            },
+          },
+        });
       });
 
       return {
@@ -106,12 +126,31 @@ export const createTeam = async ({
         },
       });
 
+      const existingUserProfileWithUrl = await tx.user.findUnique({
+        where: {
+          url: teamUrl,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (existingUserProfileWithUrl) {
+        throw new AppError(AppErrorCode.ALREADY_EXISTS, {
+          message: 'URL already taken.',
+        });
+      }
+
       if (existingTeamWithUrl) {
-        throw new AppError(AppErrorCode.ALREADY_EXISTS, 'Team URL already exists.');
+        throw new AppError(AppErrorCode.ALREADY_EXISTS, {
+          message: 'Team URL already exists.',
+        });
       }
 
       if (!customerId) {
-        throw new AppError(AppErrorCode.UNKNOWN_ERROR, 'Missing customer ID for pending teams.');
+        throw new AppError(AppErrorCode.UNKNOWN_ERROR, {
+          message: 'Missing customer ID for pending teams.',
+        });
       }
 
       return await tx.teamPending.create({
@@ -138,7 +177,9 @@ export const createTeam = async ({
     const target = z.array(z.string()).safeParse(err.meta?.target);
 
     if (err.code === 'P2002' && target.success && target.data.includes('url')) {
-      throw new AppError(AppErrorCode.ALREADY_EXISTS, 'Team URL already exists.');
+      throw new AppError(AppErrorCode.ALREADY_EXISTS, {
+        message: 'Team URL already exists.',
+      });
     }
 
     throw err;

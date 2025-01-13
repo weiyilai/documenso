@@ -5,26 +5,28 @@ import { prisma } from '@documenso/prisma';
 export type DeleteTemplateOptions = {
   id: number;
   userId: number;
+  teamId?: number;
 };
 
-export const deleteTemplate = async ({ id, userId }: DeleteTemplateOptions) => {
+export const deleteTemplate = async ({ id, userId, teamId }: DeleteTemplateOptions) => {
   return await prisma.template.delete({
     where: {
       id,
-      OR: [
-        {
-          userId,
-        },
-        {
-          team: {
-            members: {
-              some: {
-                userId,
+      ...(teamId
+        ? {
+            team: {
+              id: teamId,
+              members: {
+                some: {
+                  userId,
+                },
               },
             },
-          },
-        },
-      ],
+          }
+        : {
+            userId,
+            teamId: null,
+          }),
     },
   });
 };

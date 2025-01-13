@@ -1,3 +1,5 @@
+import { setupI18nSSR } from '@documenso/lib/client-only/providers/i18n.server';
+
 import { DocumentLogsPageView } from './document-logs-page-view';
 
 export type DocumentsLogsPageProps = {
@@ -6,6 +8,8 @@ export type DocumentsLogsPageProps = {
   };
 };
 
-export default function DocumentsLogsPage({ params }: DocumentsLogsPageProps) {
+export default async function DocumentsLogsPage({ params }: DocumentsLogsPageProps) {
+  await setupI18nSSR();
+
   return <DocumentLogsPageView params={params} />;
 }

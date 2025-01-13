@@ -1,15 +1,19 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 import { zodResolver } from '@hookform/resolvers/zod';
+import type { MessageDescriptor } from '@lingui/core';
+import { Trans, msg } from '@lingui/macro';
+import { useLingui } from '@lingui/react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { signIn } from 'next-auth/react';
 import { useForm } from 'react-hook-form';
+import { FaIdCardClip } from 'react-icons/fa6';
 import { FcGoogle } from 'react-icons/fc';
 import { z } from 'zod';
 
@@ -17,7 +21,6 @@ import communityCardsImage from '@documenso/assets/images/community-cards.png';
 import { useAnalytics } from '@documenso/lib/client-only/hooks/use-analytics';
 import { NEXT_PUBLIC_WEBAPP_URL } from '@documenso/lib/constants/app';
 import { AppError, AppErrorCode } from '@documenso/lib/errors/app-error';
-import { TRPCClientError } from '@documenso/trpc/client';
 import { trpc } from '@documenso/trpc/react';
 import { ZPasswordSchema } from '@documenso/trpc/server/auth-router/schema';
 import { cn } from '@documenso/ui/lib/utils';
@@ -44,17 +47,20 @@ type SignUpStep = 'BASIC_DETAILS' | 'CLAIM_USERNAME';
 
 export const ZSignUpFormV2Schema = z
   .object({
-    name: z.string().trim().min(1, { message: 'Please enter a valid name.' }),
+    name: z
+      .string()
+      .trim()
+      .min(1, { message: msg`Please enter a valid name.`.id }),
     email: z.string().email().min(1),
     password: ZPasswordSchema,
-    signature: z.string().min(1, { message: 'We need your signature to sign documents' }),
+    signature: z.string().min(1, { message: msg`We need your signature to sign documents`.id }),
     url: z
       .string()
       .trim()
       .toLowerCase()
-      .min(1, { message: 'We need a username to create your profile' })
+      .min(1, { message: msg`We need a username to create your profile`.id })
       .regex(/^[a-z0-9-]+$/, {
-        message: 'Username can only container alphanumeric characters and dashes.',
+        message: msg`Username can only container alphanumeric characters and dashes.`.id,
       }),
   })
   .refine(
@@ -63,9 +69,18 @@ export const ZSignUpFormV2Schema = z
       return !password.includes(name) && !password.includes(email.split('@')[0]);
     },
     {
-      message: 'Password should not be common or based on personal information',
+      message: msg`Password should not be common or based on personal information`.id,
+      path: ['password'],
     },
   );
+
+export const signupErrorMessages: Record<string, MessageDescriptor> = {
+  SIGNUP_DISABLED: msg`Signups are disabled.`,
+  [AppErrorCode.ALREADY_EXISTS]: msg`User with this email already exists. Please use a different email address.`,
+  [AppErrorCode.INVALID_REQUEST]: msg`We were unable to create your account. Please review the information you provided and try again.`,
+  [AppErrorCode.PROFILE_URL_TAKEN]: msg`This username has already been taken`,
+  [AppErrorCode.PREMIUM_PROFILE_URL]: msg`Only subscribers can have a username shorter than 6 characters`,
+};
 
 export type TSignUpFormV2Schema = z.infer<typeof ZSignUpFormV2Schema>;
 
@@ -73,14 +88,18 @@ export type SignUpFormV2Props = {
   className?: string;
   initialEmail?: string;
   isGoogleSSOEnabled?: boolean;
+  isOIDCSSOEnabled?: boolean;
 };
 
 export const SignUpFormV2 = ({
   className,
   initialEmail,
   isGoogleSSOEnabled,
+  isOIDCSSOEnabled,
 }: SignUpFormV2Props) => {
+  const { _ } = useLingui();
   const { toast } = useToast();
+
   const analytics = useAnalytics();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -108,17 +127,6 @@ export const SignUpFormV2 = ({
   const name = form.watch('name');
   const url = form.watch('url');
 
-  // To continue we need to make sure name, email, password and signature are valid
-  const canContinue =
-    form.formState.dirtyFields.name &&
-    form.formState.errors.name === undefined &&
-    form.formState.dirtyFields.email &&
-    form.formState.errors.email === undefined &&
-    form.formState.dirtyFields.password &&
-    form.formState.errors.password === undefined &&
-    form.formState.dirtyFields.signature &&
-    form.formState.errors.signature === undefined;
-
   const { mutateAsync: signup } = trpc.auth.signup.useMutation();
 
   const onFormSubmit = async ({ name, email, password, signature, url }: TSignUpFormV2Schema) => {
@@ -128,9 +136,10 @@ export const SignUpFormV2 = ({
       router.push(`/unverified-account`);
 
       toast({
-        title: 'Registration Successful',
-        description:
-          'You have successfully registered. Please verify your account by clicking on the link you received in the email.',
+        title: _(msg`Registration Successful`),
+        description: _(
+          msg`You have successfully registered. Please verify your account by clicking on the link you received in the email.`,
+        ),
         duration: 5000,
       });
 
@@ -142,30 +151,31 @@ export const SignUpFormV2 = ({
     } catch (err) {
       const error = AppError.parseError(err);
 
-      if (error.code === AppErrorCode.PROFILE_URL_TAKEN) {
+      const errorMessage = signupErrorMessages[error.code] ?? signupErrorMessages.INVALID_REQUEST;
+
+      if (
+        error.code === AppErrorCode.PROFILE_URL_TAKEN ||
+        error.code === AppErrorCode.PREMIUM_PROFILE_URL
+      ) {
         form.setError('url', {
           type: 'manual',
-          message: 'This username has already been taken',
-        });
-      } else if (error.code === AppErrorCode.PREMIUM_PROFILE_URL) {
-        form.setError('url', {
-          type: 'manual',
-          message: error.message,
-        });
-      } else if (err instanceof TRPCClientError && err.data?.code === 'BAD_REQUEST') {
-        toast({
-          title: 'An error occurred',
-          description: err.message,
-          variant: 'destructive',
+          message: _(errorMessage),
         });
       } else {
         toast({
-          title: 'An unknown error occurred',
-          description:
-            'We encountered an unknown error while attempting to sign you up. Please try again later.',
+          title: _(msg`An error occurred`),
+          description: _(errorMessage),
           variant: 'destructive',
         });
       }
+    }
+  };
+
+  const onNextClick = async () => {
+    const valid = await form.trigger(['name', 'email', 'password', 'signature']);
+
+    if (valid) {
+      setStep('CLAIM_USERNAME');
     }
   };
 
@@ -174,13 +184,40 @@ export const SignUpFormV2 = ({
       await signIn('google', { callbackUrl: SIGN_UP_REDIRECT_PATH });
     } catch (err) {
       toast({
-        title: 'An unknown error occurred',
-        description:
-          'We encountered an unknown error while attempting to sign you Up. Please try again later.',
+        title: _(msg`An unknown error occurred`),
+        description: _(
+          msg`We encountered an unknown error while attempting to sign you Up. Please try again later.`,
+        ),
         variant: 'destructive',
       });
     }
   };
+
+  const onSignUpWithOIDCClick = async () => {
+    try {
+      await signIn('oidc', { callbackUrl: SIGN_UP_REDIRECT_PATH });
+    } catch (err) {
+      toast({
+        title: _(msg`An unknown error occurred`),
+        description: _(
+          msg`We encountered an unknown error while attempting to sign you Up. Please try again later.`,
+        ),
+        variant: 'destructive',
+      });
+    }
+  };
+
+  useEffect(() => {
+    const hash = window.location.hash.slice(1);
+
+    const params = new URLSearchParams(hash);
+
+    const email = params.get('email');
+
+    if (email) {
+      form.setValue('email', email);
+    }
+  }, [form]);
 
   return (
     <div className={cn('flex justify-center gap-x-12', className)}>
@@ -198,7 +235,7 @@ export const SignUpFormV2 = ({
 
         <div className="relative flex h-full w-full flex-col items-center justify-evenly">
           <div className="bg-background rounded-2xl border px-4 py-1 text-sm font-medium">
-            User profiles are coming soon!
+            <Trans>User profiles are here!</Trans>
           </div>
 
           <AnimatePresence>
@@ -224,25 +261,33 @@ export const SignUpFormV2 = ({
         </div>
       </div>
 
-      <div className="border-border dark:bg-background relative z-10 flex min-h-[min(800px,80vh)] w-full max-w-lg flex-col rounded-xl border bg-neutral-100 p-6">
+      <div className="border-border dark:bg-background relative z-10 flex min-h-[min(850px,80vh)] w-full max-w-lg flex-col rounded-xl border bg-neutral-100 p-6">
         {step === 'BASIC_DETAILS' && (
           <div className="h-20">
-            <h1 className="text-2xl font-semibold">Create a new account</h1>
+            <h1 className="text-xl font-semibold md:text-2xl">
+              <Trans>Create a new account</Trans>
+            </h1>
 
-            <p className="text-muted-foreground mt-2 text-sm">
-              Create your account and start using state-of-the-art document signing. Open and
-              beautiful signing is within your grasp.
+            <p className="text-muted-foreground mt-2 text-xs md:text-sm">
+              <Trans>
+                Create your account and start using state-of-the-art document signing. Open and
+                beautiful signing is within your grasp.
+              </Trans>
             </p>
           </div>
         )}
 
         {step === 'CLAIM_USERNAME' && (
           <div className="h-20">
-            <h1 className="text-2xl font-semibold">Claim your username now</h1>
+            <h1 className="text-xl font-semibold md:text-2xl">
+              <Trans>Claim your username now</Trans>
+            </h1>
 
-            <p className="text-muted-foreground mt-2 text-sm">
-              You will get notified & be able to set up your documenso public profile when we launch
-              the feature.
+            <p className="text-muted-foreground mt-2 text-xs md:text-sm">
+              <Trans>
+                You will get notified & be able to set up your documenso public profile when we
+                launch the feature.
+              </Trans>
             </p>
           </div>
         )}
@@ -257,8 +302,8 @@ export const SignUpFormV2 = ({
             {step === 'BASIC_DETAILS' && (
               <fieldset
                 className={cn(
-                  'flex h-[500px] w-full flex-col gap-y-4',
-                  isGoogleSSOEnabled && 'h-[600px]',
+                  'flex h-[550px] w-full flex-col gap-y-4',
+                  (isGoogleSSOEnabled || isOIDCSSOEnabled) && 'h-[650px]',
                 )}
                 disabled={isSubmitting}
               >
@@ -267,7 +312,9 @@ export const SignUpFormV2 = ({
                   name="name"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Full Name</FormLabel>
+                      <FormLabel>
+                        <Trans>Full Name</Trans>
+                      </FormLabel>
                       <FormControl>
                         <Input type="text" {...field} />
                       </FormControl>
@@ -281,7 +328,9 @@ export const SignUpFormV2 = ({
                   name="email"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Email Address</FormLabel>
+                      <FormLabel>
+                        <Trans>Email Address</Trans>
+                      </FormLabel>
                       <FormControl>
                         <Input type="email" {...field} />
                       </FormControl>
@@ -295,7 +344,9 @@ export const SignUpFormV2 = ({
                   name="password"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Password</FormLabel>
+                      <FormLabel>
+                        <Trans>Password</Trans>
+                      </FormLabel>
 
                       <FormControl>
                         <PasswordInput {...field} />
@@ -311,7 +362,9 @@ export const SignUpFormV2 = ({
                   name="signature"
                   render={({ field: { onChange } }) => (
                     <FormItem>
-                      <FormLabel>Sign Here</FormLabel>
+                      <FormLabel>
+                        <Trans>Sign Here</Trans>
+                      </FormLabel>
                       <FormControl>
                         <SignaturePad
                           className="h-36 w-full"
@@ -326,14 +379,20 @@ export const SignUpFormV2 = ({
                   )}
                 />
 
-                {isGoogleSSOEnabled && (
+                {(isGoogleSSOEnabled || isOIDCSSOEnabled) && (
                   <>
                     <div className="relative flex items-center justify-center gap-x-4 py-2 text-xs uppercase">
                       <div className="bg-border h-px flex-1" />
-                      <span className="text-muted-foreground bg-transparent">Or</span>
+                      <span className="text-muted-foreground bg-transparent">
+                        <Trans>Or</Trans>
+                      </span>
                       <div className="bg-border h-px flex-1" />
                     </div>
+                  </>
+                )}
 
+                {isGoogleSSOEnabled && (
+                  <>
                     <Button
                       type="button"
                       size="lg"
@@ -343,16 +402,37 @@ export const SignUpFormV2 = ({
                       onClick={onSignUpWithGoogleClick}
                     >
                       <FcGoogle className="mr-2 h-5 w-5" />
-                      Sign Up with Google
+                      <Trans>Sign Up with Google</Trans>
+                    </Button>
+                  </>
+                )}
+
+                {isOIDCSSOEnabled && (
+                  <>
+                    <Button
+                      type="button"
+                      size="lg"
+                      variant={'outline'}
+                      className="bg-background text-muted-foreground border"
+                      disabled={isSubmitting}
+                      onClick={onSignUpWithOIDCClick}
+                    >
+                      <FaIdCardClip className="mr-2 h-5 w-5" />
+                      <Trans>Sign Up with OIDC</Trans>
                     </Button>
                   </>
                 )}
 
                 <p className="text-muted-foreground mt-4 text-sm">
-                  Already have an account?{' '}
-                  <Link href="/signin" className="text-documenso-700 duration-200 hover:opacity-70">
-                    Sign in instead
-                  </Link>
+                  <Trans>
+                    Already have an account?{' '}
+                    <Link
+                      href="/signin"
+                      className="text-documenso-700 duration-200 hover:opacity-70"
+                    >
+                      Sign in instead
+                    </Link>
+                  </Trans>
                 </p>
               </fieldset>
             )}
@@ -360,8 +440,8 @@ export const SignUpFormV2 = ({
             {step === 'CLAIM_USERNAME' && (
               <fieldset
                 className={cn(
-                  'flex h-[500px] w-full flex-col gap-y-4',
-                  isGoogleSSOEnabled && 'h-[600px]',
+                  'flex h-[550px] w-full flex-col gap-y-4',
+                  isGoogleSSOEnabled && 'h-[650px]',
                 )}
                 disabled={isSubmitting}
               >
@@ -370,7 +450,9 @@ export const SignUpFormV2 = ({
                   name="url"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Public profile username</FormLabel>
+                      <FormLabel>
+                        <Trans>Public profile username</Trans>
+                      </FormLabel>
 
                       <FormControl>
                         <Input type="text" className="mb-2 mt-2 lowercase" {...field} />
@@ -378,7 +460,7 @@ export const SignUpFormV2 = ({
 
                       <FormMessage />
 
-                      <div className="bg-muted/50 border-border text-muted-foreground mt-2 inline-block truncate rounded-md border px-2 py-1 text-sm lowercase">
+                      <div className="bg-muted/50 border-border text-muted-foreground mt-2 inline-block max-w-[16rem] truncate rounded-md border px-2 py-1 text-sm lowercase">
                         {baseUrl.host}/u/{field.value || '<username>'}
                       </div>
                     </FormItem>
@@ -390,13 +472,19 @@ export const SignUpFormV2 = ({
             <div className="mt-6">
               {step === 'BASIC_DETAILS' && (
                 <p className="text-muted-foreground text-sm">
-                  <span className="font-medium">Basic details</span> 1/2
+                  <span className="font-medium">
+                    <Trans>Basic details</Trans>
+                  </span>{' '}
+                  1/2
                 </p>
               )}
 
               {step === 'CLAIM_USERNAME' && (
                 <p className="text-muted-foreground text-sm">
-                  <span className="font-medium">Claim username</span> 2/2
+                  <span className="font-medium">
+                    <Trans>Claim username</Trans>
+                  </span>{' '}
+                  2/2
                 </p>
               )}
 
@@ -422,7 +510,7 @@ export const SignUpFormV2 = ({
                 disabled={step === 'BASIC_DETAILS' || form.formState.isSubmitting}
                 onClick={() => setStep('BASIC_DETAILS')}
               >
-                Back
+                <Trans>Back</Trans>
               </Button>
 
               {/* Continue button */}
@@ -431,11 +519,10 @@ export const SignUpFormV2 = ({
                   type="button"
                   size="lg"
                   className="flex-1 disabled:cursor-not-allowed"
-                  disabled={!canContinue}
                   loading={form.formState.isSubmitting}
-                  onClick={() => setStep('CLAIM_USERNAME')}
+                  onClick={onNextClick}
                 >
-                  Next
+                  <Trans>Next</Trans>
                 </Button>
               )}
 
@@ -448,7 +535,7 @@ export const SignUpFormV2 = ({
                   size="lg"
                   className="flex-1"
                 >
-                  Complete
+                  <Trans>Complete</Trans>
                 </Button>
               )}
             </div>
